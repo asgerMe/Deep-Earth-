@@ -9,7 +9,6 @@ tf.reset_default_graph()
 net = nn.NetWork(32, param_state_size=16)
 int_net = nn.IntegratorNetwork(param_state_size=16, sequence_length=30)
 init = tf.initialize_all_variables()
-#test_input = fetch_data.get_volume(config.data_path, 1, sequence_length=100, sequential=True)
 
 with tf.Session() as sess:
     sess.run(init)
