@@ -15,10 +15,10 @@ with tf.Session() as sess:
     sess.run(init)
 
     for i in range(config.training_runs):
-        #input = fetch_data.get_volume(config.data_path, 1)
-        #loss, _= sess.run([net.loss, net.train], input)
+        input = fetch_data.get_volume(config.data_path, 1)
+        loss, _= sess.run([net.loss, net.train], input)
 
-        if i % 1 == 0:
+        if i % 100 == 0:
             input_sequence, input_0 = fetch_data.get_volume(config.data_path, 1, sequential=True, sequence_length=30)
 
             parameter_encodings, label_encodings = sess.run([net.encoded_sdf, net.full_encoding], input_sequence)
@@ -26,11 +26,10 @@ with tf.Session() as sess:
             integrator_feed_dict = {'label_encodings:0': label_encodings, 'parameter_encodings:0': parameter_encodings,
                                     'start_encoding:0': start_encoding}
 
-            encodings = sess.run(int_net.loss, integrator_feed_dict)
-            print(np.shape(encodings))
+            int_loss = sess.run(int_net.loss, integrator_feed_dict)
+        
 
-        #print('Loss:', loss)
+        print('Loss:', loss)
         print('Training Run', i)
 
-    #input=fetch_data.get_volume(config.data_path, sequential=True, sequence_length=30)
-    #sess.run(int_net.full_encoding, input)
+   
