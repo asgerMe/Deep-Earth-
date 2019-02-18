@@ -20,12 +20,8 @@ def get_volume(data_path, batch_size=1, external_encoding=None, sequential=False
 
             try:
                 data = np.load(full_path, mmap_mode='r+')
-                n_voxels = np.shape(data)[2]
-                voxel_dim = int(np.ceil(pow(n_voxels, 1 / 3)))
-
                 dim1 = np.shape(data)[0]
                 random_time_index = np.random.randint(0, dim1)
-
                 data = data[random_time_index, :, :]
                 batch.append(data)
 
@@ -48,6 +44,7 @@ def get_volume(data_path, batch_size=1, external_encoding=None, sequential=False
                 random_time_index = np.random.randint(0, dim1)
 
                 batch = data[random_time_index:random_time_index+sequence_length, :, :]
+
                 padding = np.zeros([sequence_length-np.shape(batch)[0], np.shape(batch)[1], np.shape(batch)[2],
                                   np.shape(batch)[3], np.shape(batch)[4]])
 
@@ -59,9 +56,15 @@ def get_volume(data_path, batch_size=1, external_encoding=None, sequential=False
 
 
     batch = np.asarray(batch)
+
+    voxels = np.shape(batch)[2]
+    if np.log2(voxels) != np.ceil(np.log2(voxels)):
+        new_voxels = pow(2, np.ceil(np.log2(voxels)))
+        padding = int(new_voxels - voxels)
+        batch = np.pad(batch, ((0, 0), (0, 0), (padding, 0), (padding, 0), (padding, 0)), mode='constant')
+
     sdf = np.expand_dims(batch[:, 0, :, :, :], 4)
     velocity = np.moveaxis(batch[:, 1:4, :, :, :], 1, 4)
-
 
     feed_dict = {'sdf:0': sdf, 'velocity:0': velocity}
     if not sequential:
@@ -70,11 +73,25 @@ def get_volume(data_path, batch_size=1, external_encoding=None, sequential=False
         feed_dict_0 = {'sdf:0': [sdf[0, :, :, :, :]], 'velocity:0': [velocity[0, :, :, :, :]]}
         return feed_dict, feed_dict_0
 
+def get_grid_diffs(file_name, data_path=config.data_path):
 
-def get_random_sample(name, batch_size = 1, voxel_side_length=32):
-    data_array = np.random.rand(1, voxel_side_length, voxel_side_length, voxel_side_length, 3)
-    feed_dict = {name: data_array}
-    return data_array
+    full_path = os.path.join(data_path, file_name)
+
+    try:
+        data = np.load(full_path, mmap_mode='r+')
+        voxels = np.shape(data)[2]
+        if np.log2(voxels) != np.ceil(np.log2(voxels)):
+            new_voxels = pow(2, np.ceil(np.log2(voxels)))
+            padding = int(new_voxels - voxels)
+            data = np.pad(data, ((0, 0), (0, 0), (padding, 0), (padding, 0), (padding, 0)), mode='constant')
+            data = np.moveaxis(data, 1, 4)
+
+        return data
+
+    except IndexError:
+        print('could not open file')
+        return 0
+
 
 def viz_data_slice(x, field_index = 0):
     half_size = int(np.ceil(np.shape(x)[3]/2))
@@ -83,7 +100,6 @@ def viz_data_slice(x, field_index = 0):
     d2_tensor = x[0, :, :, half_size, fidx]
     plt.imshow(d2_tensor, interpolation='bilinear')
     plt.show()
-
 
 
 

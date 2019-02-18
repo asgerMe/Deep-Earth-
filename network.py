@@ -1,9 +1,22 @@
 import tensorflow as tf
 import numpy as np
 import fetch_data as fd
+import config
+
 class layers:
 
-    def SB(self, x, j, n_filters=128, n_blocks=1, upsample=True):
+    def __init__(self):
+        self.grid = tf.constant(fd.get_grid_diffs(config.grid_file, config.data_path), dtype=tf.float32)
+
+    def get_kernel(self):
+        kernel = np.asarray([[[0, 1, 0], [1, 1, 1], [0, 1, 0]], [[1, 1, 1], [1, 1, 1], [1, 1, 1]], [[0, 1, 0], [1, 1, 1], [0, 1, 0]]])
+        kernel = np.expand_dims(kernel, axis=3)
+        kernel = np.expand_dims(kernel, axis=4)
+        kernel = tf.constant(kernel, dtype=tf.float32)
+
+        return kernel
+
+    def SB(self, x, j, n_filters=16, n_blocks=1, upsample=True):
         output = x
         for i in range(n_blocks):
             if(upsample):
@@ -25,13 +38,17 @@ class layers:
 
         return output
 
-    def BB(self, x, bb_blocks=1, n_filters=128, upsample=True):
+    def BB(self, x, bb_blocks=1, n_filters=16, FEM=False, upsample=True):
         for q in range(bb_blocks):
-            x = self.SB(x, q, n_filters=n_filters, n_blocks=bb_blocks, upsample=upsample)
+            if not FEM:
+                x = self.SB(x, q, n_filters=n_filters, n_blocks=bb_blocks, upsample=upsample)
+            else:
+                x = self.geometric_SB(x, self.grid, q, upsample=upsample)
+
             if upsample:
                 x = self.upsample(x)
             else:
-                x = tf.nn.max_pool3d(input=x, ksize=(1, 1, 1, 1, 1), padding='VALID', strides=(1, 2, 2, 2, 1))
+                x = self.downsample(x)
         return x
 
     def upsample(self, x, interpolation=1):
@@ -50,6 +67,27 @@ class layers:
         unstack_y = tf.unstack(x, axis=2)
         for i in unstack_y:
             tensor_list_y.append(tf.image.resize_images(i, [xdim*2, zdim*2], method=interpolation))
+
+        x = tf.stack(tensor_list_y, axis=2)
+
+        return x
+
+    def downsample(self, x, interpolation=1):
+        tensor_list_x = []
+        tensor_list_y = []
+        xdim = x.get_shape().as_list()[1]
+        ydim = x.get_shape().as_list()[2]
+        zdim = x.get_shape().as_list()[2]
+
+        unstack_x = tf.unstack(x, axis=1)
+        for i in unstack_x:
+            tensor_list_x.append(tf.image.resize_images(i, [tf.cast(ydim/2, dtype=tf.int32), tf.cast(zdim/2, dtype=tf.int32)], method=interpolation))
+
+        x = tf.stack(tensor_list_x, axis=1)
+
+        unstack_y = tf.unstack(x, axis=2)
+        for i in unstack_y:
+            tensor_list_y.append(tf.image.resize_images(i, [tf.cast(xdim/2, dtype=tf.int32), tf.cast(zdim/2, dtype=tf.int32)], method=interpolation))
 
         x = tf.stack(tensor_list_y, axis=2)
 
@@ -74,6 +112,62 @@ class layers:
             d_stack.append(dz)
 
         return tf.squeeze(tf.stack(d_stack, axis=4), axis=5)
+
+    def geometric_SB(self, x, grid, j, n_blocks=1, n_filters=16, upsample=True, kernel_width = 3, activation = None):
+
+        shape_x = x.get_shape().as_list()[1]
+        shape_y = x.get_shape().as_list()[2]
+        shape_z = x.get_shape().as_list()[3]
+        data_channels = x.get_shape().as_list()[4]
+
+        grid_x = grid.get_shape().as_list()[1]
+        grid_y = grid.get_shape().as_list()[2]
+        grid_z = grid.get_shape().as_list()[3]
+        grid_channels = grid.get_shape().as_list()[4]
+
+        ratio_x = grid_x / shape_x
+        ratio_y = grid_y / shape_y
+        ratio_z = grid_z / shape_z
+
+        max_subs = int(np.log2(np.max([ratio_x, ratio_y, ratio_z])))
+
+        for i in range(max_subs):
+            grid = tf.nn.avg_pool3d(input=grid, ksize=(1, 1, 1, 1, 1), padding='VALID', strides=(1, 2, 2, 2, 1))
+
+        output = x
+        output = tf.einsum('qxyzk,qxyzt->qxyzkt', output, grid)
+        output = tf.reshape(output, shape=(-1, shape_x, shape_y, shape_z, data_channels*grid_channels))
+        unstack_output = tf.unstack(output, axis=4)
+        output_list = []
+        for i in unstack_output:
+            i = tf.expand_dims(i, axis=4)
+            slice_conv = tf.nn.conv3d(input=i,
+                                  filter=self.get_kernel(),
+                                  padding='SAME',
+                                  strides=(1, 1, 1, 1, 1))
+
+            output_list.append(slice_conv)
+
+        output = tf.squeeze(tf.stack(output_list, axis=4), axis=5)
+        output = tf.concat((x, output), axis=4)
+
+        for i in range(n_blocks):
+            if upsample:
+                weight_name = 'SB_BLOCK_UP' + str(i) + str(j)
+            else:
+                weight_name = 'SB_BLOCK_DW' + str(i) + str(j)
+
+            output = tf.layers.conv3d(inputs=output,
+                                        filters=n_filters,
+                                        strides=(1, 1, 1),
+                                        kernel_size=(kernel_width, kernel_width, kernel_width),
+                                        activation=activation,
+                                        padding='SAME',
+                                        name=weight_name)
+
+        if data_channels == n_filters:
+            output += x
+        return output
 
 class IntegratorNetwork:
 
@@ -115,7 +209,6 @@ class IntegratorNetwork:
 
         self.list_of_encodings = tf.slice(self.list_of_encodings, [0, 1, 0], [-1, -1, -1])
 
-
         self.loss = tf.reduce_mean(tf.square(self.list_of_encodings - tf.expand_dims(self.y, axis=0)))
         self.train = tf.train.AdamOptimizer(0.0001).minimize(self.loss)
 
@@ -123,42 +216,41 @@ class IntegratorNetwork:
 class NetWork(layers):
 
     def __init__(self, voxel_side, param_state_size=8):
+        super(NetWork, self).__init__()
 
         self.param_state_size = param_state_size
         self.vx_log2 = np.log2(voxel_side)
         self.q = self.vx_log2 - np.log2(param_state_size)
 
-        self.x = tf.placeholder(dtype=tf.float32, shape=(None,  voxel_side,  voxel_side,  voxel_side, 3), name='velocity')
-        self.sdf = tf.placeholder(dtype=tf.float32, shape=(None,  voxel_side,  voxel_side,  voxel_side, 1), name='sdf')
+        x = tf.placeholder(dtype=tf.float32, shape=(None,  voxel_side,  voxel_side,  voxel_side, 3), name='velocity')
+        sdf = tf.placeholder(dtype=tf.float32, shape=(None,  voxel_side,  voxel_side,  voxel_side, 1), name='sdf')
 
-        self.c = self.encoder_network(self.x)
+
+        c = self.encoder_network(x)
 
         with tf.variable_scope('boundary_conditions'):
-            self.encoded_sdf = self.encoder_network(self.sdf)
+            self.encoded_sdf = self.encoder_network(sdf)
 
-        self.full_encoding = tf.concat((self.c, self.encoded_sdf), axis=1)
+        self.full_encoding = tf.concat((c, self.encoded_sdf), axis=1)
 
+        y = self.decoder_network(self.full_encoding)
 
-        self.y = self.decoder_network(self.full_encoding)
+        dy = self.central_difference(y)
+        dx = self.central_difference(x)
 
-        self.dy = self.central_difference(self.y)
-        self.dx = self.central_difference(self.x)
+        l2_loss_v = tf.reduce_mean(tf.square(y - x))
+        l2_loss_dv = tf.reduce_mean(tf.square(dy - dx))
 
-        self.l2_loss_v = tf.reduce_mean(tf.square(self.y - self.x))
-        self.l2_loss_dv = tf.reduce_mean(tf.square(self.dy - self.dx))
-
-        self.loss = self.l2_loss_v + self.l2_loss_dv
+        self.loss = l2_loss_v + l2_loss_dv
         self.train = tf.train.AdamOptimizer(0.0001).minimize(self.loss)
 
+    def decoder_network(self, x, sb_blocks=1, n_filters=128):
 
-
-    def decoder_network(self, x, sb_blocks=1):
-
-        output_dim = pow(self.param_state_size, 3)*128
+        output_dim = pow(self.param_state_size, 3)*n_filters
         x = tf.layers.dense(x, output_dim, activation=tf.nn.leaky_relu)
-        x = tf.reshape(x, shape=(-1, self.param_state_size, self.param_state_size, self.param_state_size, 128))
+        x = tf.reshape(x, shape=(-1, self.param_state_size, self.param_state_size, self.param_state_size, n_filters))
 
-        x = self.BB(x, int(self.q))
+        x = self.BB(x, int(self.q), FEM=config.use_fem, n_filters=n_filters)
         x = tf.layers.conv3d(x,   strides=(1, 1, 1),
                                   kernel_size=(3, 3, 3),
                                   filters=3, padding='SAME',
@@ -166,12 +258,12 @@ class NetWork(layers):
                                   name='output_convolution')
         return x
 
-    def encoder_network(self, x,  sb_blocks=1):
+    def encoder_network(self, x,  sb_blocks=1, n_filters=128):
 
-        x = self.BB(x, int(self.q), upsample=False)
+        x = self.BB(x, int(self.q), FEM=config.use_fem, upsample=False, n_filters=n_filters)
         x = tf.contrib.layers.flatten(x)
         c = tf.layers.dense(x, self.param_state_size, activation=tf.nn.leaky_relu)
         return c
 
 
-   
+
