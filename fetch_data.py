@@ -93,13 +93,4 @@ def get_grid_diffs(file_name, data_path=config.data_path):
         return 0
 
 
-def viz_data_slice(x, field_index = 0):
-    half_size = int(np.ceil(np.shape(x)[3]/2))
-    n_fields = int(np.shape(x)[4])
-    fidx = np.clip(int(field_index), 0, n_fields)
-    d2_tensor = x[0, :, :, half_size, fidx]
-    plt.imshow(d2_tensor, interpolation='bilinear')
-    plt.show()
-
-
 

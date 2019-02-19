@@ -43,7 +43,7 @@ class layers:
             if not FEM:
                 x = self.SB(x, q, n_filters=n_filters, n_blocks=bb_blocks, upsample=upsample)
             else:
-                x = self.geometric_SB(x, self.grid, q, upsample=upsample)
+                x = self.geometric_SB(x, q, upsample=upsample)
 
             if upsample:
                 x = self.upsample(x)
@@ -113,29 +113,56 @@ class layers:
 
         return tf.squeeze(tf.stack(d_stack, axis=4), axis=5)
 
-    def geometric_SB(self, x, grid, j, n_blocks=1, n_filters=16, upsample=True, kernel_width = 3, activation = None):
+    def FEM_diffential(self, x):
 
         shape_x = x.get_shape().as_list()[1]
         shape_y = x.get_shape().as_list()[2]
         shape_z = x.get_shape().as_list()[3]
         data_channels = x.get_shape().as_list()[4]
 
-        grid_x = grid.get_shape().as_list()[1]
-        grid_y = grid.get_shape().as_list()[2]
-        grid_z = grid.get_shape().as_list()[3]
-        grid_channels = grid.get_shape().as_list()[4]
+        grid_channels = self.grid.get_shape().as_list()[4]
+
+        x = tf.einsum('qxyzk,qxyzt->qxyzkt', x, self.grid)
+        x = tf.reshape(x, shape=(-1, shape_x, shape_y, shape_z, data_channels * grid_channels))
+
+        unstack_output = tf.unstack(x, axis=4)
+        output_list = []
+        for i in unstack_output:
+            i = tf.expand_dims(i, axis=4)
+            slice_conv = tf.nn.conv3d(input=i,
+                                      filter=self.get_kernel(),
+                                      padding='SAME',
+                                      strides=(1, 1, 1, 1, 1))
+
+            output_list.append(slice_conv)
+
+        x = tf.squeeze(tf.stack(output_list, axis=4), axis=5)
+        return x
+
+
+    def geometric_SB(self, x, j, n_blocks=1, n_filters=16, upsample=True, kernel_width = 3, activation = None):
+
+        shape_x = x.get_shape().as_list()[1]
+        shape_y = x.get_shape().as_list()[2]
+        shape_z = x.get_shape().as_list()[3]
+        data_channels = x.get_shape().as_list()[4]
+
+        grid_x = self.grid.get_shape().as_list()[1]
+        grid_y = self.grid.get_shape().as_list()[2]
+        grid_z = self.grid.get_shape().as_list()[3]
+        grid_channels = self.grid.get_shape().as_list()[4]
 
         ratio_x = grid_x / shape_x
         ratio_y = grid_y / shape_y
         ratio_z = grid_z / shape_z
 
         max_subs = int(np.log2(np.max([ratio_x, ratio_y, ratio_z])))
-
+        _grid = self.grid
         for i in range(max_subs):
-            grid = tf.nn.avg_pool3d(input=grid, ksize=(1, 1, 1, 1, 1), padding='VALID', strides=(1, 2, 2, 2, 1))
+            _grid = tf.nn.avg_pool3d(input=_grid, ksize=(1, 1, 1, 1, 1), padding='VALID', strides=(1, 2, 2, 2, 1))
 
         output = x
-        output = tf.einsum('qxyzk,qxyzt->qxyzkt', output, grid)
+        output = tf.einsum('qxyzk,qxyzt->qxyzkt', output, _grid)
         output = tf.reshape(output, shape=(-1, shape_x, shape_y, shape_z, data_channels*grid_channels))
         unstack_output = tf.unstack(output, axis=4)
         output_list = []
@@ -177,13 +204,13 @@ class IntegratorNetwork:
 
         self.full_encoding = tf.placeholder(dtype=tf.float32, shape=(1, 1, 2*param_state_size), name='start_encoding')
         self.parm_encodings = tf.placeholder(dtype=tf.float32, shape=(sequence_length, param_state_size), name= 'parameter_encodings')
-
+        training = tf.placeholder(dtype=tf.int32, shape=1, name='phase')
         self.list_of_encodings = self.full_encoding
 
         def body(encoding, idx, list_of_encodings, parm_encodings):
-            f1 = tf.nn.dropout(tf.layers.dense(encoding, 1024, activation=tf.nn.elu), 0.9)
-            f2 = tf.nn.dropout(tf.layers.dense(f1, 512, activation=tf.nn.elu), 0.9)
-            T = tf.nn.dropout(tf.layers.dense(f2, param_state_size, activation=tf.nn.elu), 0.9)
+            f1 = tf.contrib.layers.batch_norm(tf.nn.dropout(tf.layers.dense(encoding, 1024, activation=tf.nn.elu), 0.9), phase=training)
+            f2 = tf.contrib.layers.batch_norm(tf.nn.dropout(tf.layers.dense(f1, 512, activation=tf.nn.elu), 0.9), phase = training)
+            T = tf.contrib.layers.batch_norm(tf.nn.dropout(tf.layers.dense(f2, param_state_size, activation=tf.nn.elu), 0.9), phase=training)
 
             encoding = tf.slice(encoding,[0, 0, 0],[-1, -1, param_state_size])
             sliced_parm_encoding = tf.slice(parm_encodings, [tf.cast(idx, dtype=tf.int32), 0], [1, -1])
@@ -210,7 +237,10 @@ class IntegratorNetwork:
         self.list_of_encodings = tf.slice(self.list_of_encodings, [0, 1, 0], [-1, -1, -1])
 
         self.loss = tf.reduce_mean(tf.square(self.list_of_encodings - tf.expand_dims(self.y, axis=0)))
-        self.train = tf.train.AdamOptimizer(0.0001).minimize(self.loss)
+
+        update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS)
+        with tf.control_dependencies(update_ops):
+            self.train = tf.train.AdamOptimizer(0.0001).minimize(self.loss)
 
 
 class NetWork(layers):
@@ -224,8 +254,6 @@ class NetWork(layers):
 
         x = tf.placeholder(dtype=tf.float32, shape=(None,  voxel_side,  voxel_side,  voxel_side, 3), name='velocity')
         sdf = tf.placeholder(dtype=tf.float32, shape=(None,  voxel_side,  voxel_side,  voxel_side, 1), name='sdf')
-
-
         c = self.encoder_network(x)
 
         with tf.variable_scope('boundary_conditions'):
@@ -235,13 +263,17 @@ class NetWork(layers):
 
         y = self.decoder_network(self.full_encoding)
 
-        dy = self.central_difference(y)
-        dx = self.central_difference(x)
+        if not config.use_fem:
+            dy = self.central_difference(y)
+            dx = self.central_difference(x)
+        else:
+            dy = self.FEM_diffential(y)
+            dx = self.FEM_diffential(x)
 
-        l2_loss_v = tf.reduce_mean(tf.square(y - x))
-        l2_loss_dv = tf.reduce_mean(tf.square(dy - dx))
+        self.l2_loss_v = tf.reduce_mean(tf.square(y - x))
+        self.l2_loss_dv = tf.reduce_mean(tf.square(dy - dx))
 
-        self.loss = l2_loss_v + l2_loss_dv
+        self.loss = self.l2_loss_v + self.l2_loss_dv
         self.train = tf.train.AdamOptimizer(0.0001).minimize(self.loss)
 
     def decoder_network(self, x, sb_blocks=1, n_filters=128):
@@ -266,4 +298,10 @@ class NetWork(layers):
         return c
 
 
-
+    def tensor_board(self, on = False):
+        if on:
+            tf.summary.scalar('Loss', self.loss)
+            tf.summary.scalar('Field Loss', self.l2_loss_v)
+            tf.summary.scalar('Gradient Loss', self.l2_loss_dv)
+            merged = tf.summary.merge_all()
+            return merged
