@@ -8,7 +8,7 @@ import helper_functions as hf
 
 tf.reset_default_graph()
 net = nn.NetWork(32, param_state_size=16)
-int_net = _
+
 if config.train_integrator_network:
     int_net = nn.IntegratorNetwork(param_state_size=16, sequence_length=30)
 
@@ -22,9 +22,9 @@ with tf.Session() as sess:
         inputs = fetch_data.get_volume(config.data_path, 1)
         loss, _ = sess.run([net.loss, net.train], inputs)
 
-        if config.write_to_tensorboard and i % config.f_tensorboard == 0:
-            merged = sess.run([net.tensor_board(on=True), inputs])
-            writer.add_summary(merged, i)
+        #if config.write_to_tensorboard and i % config.f_tensorboard == 0:
+        #    merged = sess.run([net.tensor_board(on=True), inputs])
+        #    writer.add_summary(merged, i)
 
         if i % config.f_integrator_network == 0 and config.train_integrator_network:
             input_sequence, input_0 = fetch_data.get_volume(config.data_path, 1, sequential=True, sequence_length=30)

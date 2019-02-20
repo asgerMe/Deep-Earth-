@@ -204,13 +204,13 @@ class IntegratorNetwork:
 
         self.full_encoding = tf.placeholder(dtype=tf.float32, shape=(1, 1, 2*param_state_size), name='start_encoding')
         self.parm_encodings = tf.placeholder(dtype=tf.float32, shape=(sequence_length, param_state_size), name= 'parameter_encodings')
-        training = tf.placeholder(dtype=tf.int32, shape=1, name='phase')
+        training = tf.placeholder(dtype=tf.bool, name='phase')
         self.list_of_encodings = self.full_encoding
 
         def body(encoding, idx, list_of_encodings, parm_encodings):
-            f1 = tf.contrib.layers.batch_norm(tf.nn.dropout(tf.layers.dense(encoding, 1024, activation=tf.nn.elu), 0.9), phase=training)
-            f2 = tf.contrib.layers.batch_norm(tf.nn.dropout(tf.layers.dense(f1, 512, activation=tf.nn.elu), 0.9), phase = training)
-            T = tf.contrib.layers.batch_norm(tf.nn.dropout(tf.layers.dense(f2, param_state_size, activation=tf.nn.elu), 0.9), phase=training)
+            f1 = tf.contrib.layers.batch_norm(tf.nn.dropout(tf.layers.dense(encoding, 1024, activation=tf.nn.elu), rate=0.1), is_training=training)
+            f2 = tf.contrib.layers.batch_norm(tf.nn.dropout(tf.layers.dense(f1, 512, activation=tf.nn.elu), rate=0.1), is_training=training)
+            T =  tf.contrib.layers.batch_norm(tf.nn.dropout(tf.layers.dense(f2, param_state_size, activation=tf.nn.elu), rate=0.1), is_training=training)
 
             encoding = tf.slice(encoding,[0, 0, 0],[-1, -1, param_state_size])
             sliced_parm_encoding = tf.slice(parm_encodings, [tf.cast(idx, dtype=tf.int32), 0], [1, -1])

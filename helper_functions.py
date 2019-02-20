@@ -18,4 +18,4 @@ def check_path(path):
     if is_valid:
         return path
     else:
-        return tempfile.TemporaryDirectory()
+        return '../'
