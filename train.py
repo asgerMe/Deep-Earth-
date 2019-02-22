@@ -4,6 +4,7 @@ import config
 import fetch_data
 import network as nn
 import os
+
 import helper_functions as hf
 
 tf.reset_default_graph()
@@ -16,10 +17,12 @@ init = tf.global_variables_initializer()
 
 with tf.Session() as sess:
     sess.run(init)
-    writer = tf.summary.FileWriter(os.path.join(hf.check_path(config.tensorboard_path), "tensorboard_file"))
+    #writer = tf.summary.FileWriter(os.path.join(hf.check_path(config.tensorboard_path), "tensorboard_file"))
+    saver = tf.train.Saver(tf.global_variables())
 
     for i in range(config.training_runs):
         inputs = fetch_data.get_volume(config.data_path, 1)
+
         loss, _ = sess.run([net.loss, net.train], inputs)
 
         #if config.write_to_tensorboard and i % config.f_tensorboard == 0:
@@ -34,8 +37,10 @@ with tf.Session() as sess:
             integrator_feed_dict = {'label_encodings:0': label_encodings, 'parameter_encodings:0': parameter_encodings,
                                     'start_encoding:0': start_encoding, 'phase:0': True}
 
-            encodings = sess.run(int_net.loss, integrator_feed_dict)
+            sess.run(int_net.train, integrator_feed_dict)
 
+        if config.save and i % config.save_freq  ==0:
+            saver.save(sess, os.path.join(config.save_path + "/trained_model.ckpt"))
 
-        print('Loss:', np.shape(loss))
+        #print('Loss:', np.shape(loss))
         print('Training Run', i)
