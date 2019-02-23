@@ -38,12 +38,12 @@ class layers:
 
         return output
 
-    def BB(self, x, bb_blocks=1, n_filters=16, FEM=False, upsample=True):
+    def BB(self, x, bb_blocks=1, sb_blocks=1, n_filters=16, FEM=False, upsample=True):
         for q in range(bb_blocks):
             if not FEM:
-                x = self.SB(x, q, n_filters=n_filters, n_blocks=bb_blocks, upsample=upsample)
+                x = self.SB(x, q, n_filters=n_filters, n_blocks=sb_blocks, upsample=upsample)
             else:
-                x = self.geometric_SB(x, q, upsample=upsample)
+                x = self.geometric_SB(x, q, n_blocks=sb_blocks, upsample=upsample)
 
             if upsample:
                 x = self.upsample(x)
@@ -239,9 +239,9 @@ class IntegratorNetwork:
 
             self.list_of_encodings = tf.slice(self.list_of_encodings, [0, 1, 0], [-1, -1, -1])
 
-            self.loss = tf.reduce_mean(tf.square(self.list_of_encodings - tf.expand_dims(self.y, axis=0)))
-
-            self.train = tf.train.AdamOptimizer(0.0001).minimize(self.loss)
+            self.loss_int = tf.reduce_mean(tf.square(self.list_of_encodings - tf.expand_dims(self.y, axis=0)))
+            self.merged_int = tf.summary.scalar('Integrator Loss', self.loss_int)
+            self.train_int = tf.train.AdamOptimizer(0.0001).minimize(self.loss_int)
 
 
 class NetWork(layers):
@@ -253,21 +253,20 @@ class NetWork(layers):
         self.vx_log2 = np.log2(voxel_side)
         self.q = self.vx_log2 - np.log2(param_state_size)
 
-
         x = tf.placeholder(dtype=tf.float32, shape=(None,  voxel_side,  voxel_side,  voxel_side, 3), name='velocity')
         sdf = tf.placeholder(dtype=tf.float32, shape=(None,  voxel_side,  voxel_side,  voxel_side, 1), name='sdf')
 
         with tf.variable_scope('Boundary_conditions'):
-            self.encoded_sdf = self.encoder_network(sdf)
+            self.encoded_sdf = self.encoder_network(sdf, sb_blocks=config.sb_blocks, n_filters=config.n_filters)
 
         with tf.variable_scope('Encoder'):
-            c = self.encoder_network(x)
+            c = self.encoder_network(x, sb_blocks=config.sb_blocks, n_filters=config.n_filters)
 
         with tf.variable_scope('Latent_State'):
             self.full_encoding = tf.concat((c, self.encoded_sdf), axis=1)
 
         with tf.variable_scope('Decoder'):
-            y = self.decoder_network(self.full_encoding)
+            y = self.decoder_network(self.full_encoding, sb_blocks=config.sb_blocks, n_filters=config.n_filters)
 
         with tf.variable_scope('Differentiate'):
             if not config.use_fem:
@@ -286,13 +285,17 @@ class NetWork(layers):
         with tf.variable_scope('Train'):
             self.train = tf.train.AdamOptimizer(0.0001).minimize(self.loss)
 
-    def decoder_network(self, x, sb_blocks=1, n_filters=128):
+        tf.summary.scalar('Encoder Loss', self.loss)
+        tf.summary.scalar('Encoder Field Loss', self.l2_loss_v)
+        tf.summary.scalar('Encoder Gradient Loss', self.l2_loss_dv)
+        self.merged = tf.summary.merge_all()
 
+    def decoder_network(self, x, sb_blocks=1, n_filters=128):
         output_dim = pow(self.param_state_size, 3)*n_filters
         x = tf.layers.dense(x, output_dim, activation=tf.nn.leaky_relu)
         x = tf.reshape(x, shape=(-1, self.param_state_size, self.param_state_size, self.param_state_size, n_filters))
 
-        x = self.BB(x, int(self.q), FEM=config.use_fem, n_filters=n_filters)
+        x = self.BB(x, int(self.q), FEM=config.use_fem, sb_blocks=sb_blocks, n_filters=n_filters)
         x = tf.layers.conv3d(x,   strides=(1, 1, 1),
                                   kernel_size=(3, 3, 3),
                                   filters=3, padding='SAME',
@@ -300,18 +303,10 @@ class NetWork(layers):
                                   name='output_convolution')
         return x
 
-    def encoder_network(self, x,  sb_blocks=1, n_filters=128):
-
-        x = self.BB(x, int(self.q), FEM=config.use_fem, upsample=False, n_filters=n_filters)
+    def encoder_network(self, x, sb_blocks=1, n_filters=128):
+        x = self.BB(x, int(self.q), FEM=config.use_fem, upsample=False, sb_blocks=sb_blocks, n_filters=n_filters)
         x = tf.contrib.layers.flatten(x)
         c = tf.layers.dense(x, self.param_state_size, activation=tf.nn.leaky_relu)
         return c
 
 
-    def tensor_board(self, on = False):
-        if on:
-            tf.summary.scalar('Loss', self.loss)
-            tf.summary.scalar('Field Loss', self.l2_loss_v)
-            tf.summary.scalar('Gradient Loss', self.l2_loss_dv)
-            merged = tf.summary.merge_all()
-            return merged

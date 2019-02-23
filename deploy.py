@@ -5,7 +5,7 @@ import os
 import fetch_data
 
 
-def create_sequence(graph_path=config.save_path, roll_out_length=0):
+def deploy_network(graph_path=config.save_freq, roll_out_length=0):
     tf.reset_default_graph()
     feed_dict = fetch_data.get_volume(config.data_path, 1)
 
