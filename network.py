@@ -8,7 +8,7 @@ class layers:
     def __init__(self):
         self.grid = tf.constant(fd.get_grid_diffs(config.grid_file, config.data_path), dtype=tf.float32)
 
-    def get_kernel(self):
+    def differential_kernel(self):
         kernel = np.asarray([[[0, 1, 0], [1, 1, 1], [0, 1, 0]], [[1, 1, 1], [1, 1, 1], [1, 1, 1]], [[0, 1, 0], [1, 1, 1], [0, 1, 0]]])
         kernel = np.expand_dims(kernel, axis=3)
         kernel = np.expand_dims(kernel, axis=4)
@@ -51,46 +51,48 @@ class layers:
                 x = self.downsample(x)
         return x
 
+    def trilinear_interpolation_kernel(self):
+        kernel = np.asarray(
+            [[[1.0/32, 1.0/16, 1.0/32], [1.0/16, 1.0/8, 1.0/16], [1.0/32, 1.0/16, 1.0/32]],
+             [[1.0/16, 1.0/8, 1.0/16], [1.0/8, 1.0/4, 1.0/8], [1.0/16, 1.0/8, 1.0/16]],
+             [[1.0/32, 1.0/16, 1.0/32], [1.0/16, 1.0/8, 1.0/16], [1.0/32, 1.0/16, 1.0/32]]])
+
+        kernel = np.expand_dims(kernel, axis=3)
+        kernel = np.expand_dims(kernel, axis=4)
+        kernel = tf.constant(kernel, dtype=tf.float32)
+
+        return kernel
+
+
     def upsample(self, x, interpolation=1):
-        tensor_list_x = []
-        tensor_list_y = []
+
+
         xdim = x.get_shape().as_list()[1]
         ydim = x.get_shape().as_list()[2]
-        zdim = x.get_shape().as_list()[2]
+        zdim = x.get_shape().as_list()[3]
+        wdim = x.get_shape().as_list()[4]
 
-        unstack_x = tf.unstack(x, axis=1)
-        for i in unstack_x:
-            tensor_list_x.append(tf.image.resize_images(i, [ydim*2, zdim*2], method=interpolation))
+        x = tf.reshape(x, [-1, xdim, ydim, zdim])
+        bdim = tf.shape(x)[0]
 
-        x = tf.stack(tensor_list_x, axis=1)
+        x = tf.expand_dims(x, axis=4)
 
-        unstack_y = tf.unstack(x, axis=2)
-        for i in unstack_y:
-            tensor_list_y.append(tf.image.resize_images(i, [xdim*2, zdim*2], method=interpolation))
-
-        x = tf.stack(tensor_list_y, axis=2)
-
+        x = tf.nn.conv3d_transpose(x, output_shape=[bdim, 2*xdim, 2*ydim, 2*zdim, 1], strides=(1, 2, 2, 2, 1), filter=self.trilinear_interpolation_kernel(), padding='SAME', name = 'upsample')
+        x = tf.reshape(x, [-1, int(2*xdim), int(2*ydim), int(2*zdim), int(wdim)])
         return x
 
     def downsample(self, x, interpolation=1):
-        tensor_list_x = []
-        tensor_list_y = []
+
         xdim = x.get_shape().as_list()[1]
         ydim = x.get_shape().as_list()[2]
-        zdim = x.get_shape().as_list()[2]
+        zdim = x.get_shape().as_list()[3]
+        wdim = x.get_shape().as_list()[4]
 
-        unstack_x = tf.unstack(x, axis=1)
-        for i in unstack_x:
-            tensor_list_x.append(tf.image.resize_images(i, [tf.cast(ydim/2, dtype=tf.int32), tf.cast(zdim/2, dtype=tf.int32)], method=interpolation))
+        x = tf.reshape(x, [-1, xdim, ydim, zdim])
+        x = tf.expand_dims(x, axis=4)
 
-        x = tf.stack(tensor_list_x, axis=1)
-
-        unstack_y = tf.unstack(x, axis=2)
-        for i in unstack_y:
-            tensor_list_y.append(tf.image.resize_images(i, [tf.cast(xdim/2, dtype=tf.int32), tf.cast(zdim/2, dtype=tf.int32)], method=interpolation))
-
-        x = tf.stack(tensor_list_y, axis=2)
-
+        x = tf.nn.conv3d(x, strides=(1, 2, 2, 2, 1), filter=self.trilinear_interpolation_kernel(), padding='SAME', name='downsample')
+        x = tf.reshape(x, [-1, int(xdim/2), int(ydim/2), int(zdim/2), int(wdim)])
         return x
 
     def central_difference(self, x):
@@ -159,7 +161,7 @@ class layers:
         max_subs = int(np.log2(np.max([ratio_x, ratio_y, ratio_z])))
         _grid = self.grid
         for i in range(max_subs):
-            _grid = tf.nn.avg_pool3d(input=_grid, ksize=(1, 1, 1, 1, 1), padding='VALID', strides=(1, 2, 2, 2, 1))
+            _grid = self.downsample(_grid)
 
         output = x
         output = tf.einsum('qxyzk,qxyzt->qxyzkt', output, _grid)
@@ -169,7 +171,7 @@ class layers:
         for i in unstack_output:
             i = tf.expand_dims(i, axis=4)
             slice_conv = tf.nn.conv3d(input=i,
-                                  filter=self.get_kernel(),
+                                  filter=self.differential_kernel(),
                                   padding='SAME',
                                   strides=(1, 1, 1, 1, 1))
 
@@ -198,12 +200,12 @@ class layers:
 
 class IntegratorNetwork:
 
-    def __init__(self, param_state_size=8, sequence_length = 30):
+    def __init__(self, param_state_size=8):
 
-        self.y = tf.placeholder(dtype=tf.float32, shape=(sequence_length, 2*param_state_size), name='label_encodings')
-
+        self.y = tf.placeholder(dtype=tf.float32, shape=(None, 2*param_state_size), name='label_encodings')
+        sequence_length = tf.placeholder(dtype=tf.int32, name='sequence_length')
         self.full_encoding = tf.placeholder(dtype=tf.float32, shape=(1, 1, 2*param_state_size), name='start_encoding')
-        self.parm_encodings = tf.placeholder(dtype=tf.float32, shape=(sequence_length, param_state_size), name= 'parameter_encodings')
+        self.parm_encodings = tf.placeholder(dtype=tf.float32, shape=(None, param_state_size), name= 'parameter_encodings')
         training = tf.placeholder(dtype=tf.bool, name='phase')
 
         with tf.variable_scope('Integrater_Network'):
@@ -214,7 +216,7 @@ class IntegratorNetwork:
                 f2 = tf.nn.dropout(tf.layers.dense(f1, 512, activation=tf.nn.elu), keep_prob=0.9)
                 T = tf.nn.dropout(tf.layers.dense(f2, param_state_size, activation=tf.nn.elu), keep_prob=0.9)
 
-                encoding = tf.slice(encoding,[0, 0, 0],[-1, -1, param_state_size])
+                encoding = tf.slice(encoding,[0, 0, 0], [-1, -1, param_state_size])
                 sliced_parm_encoding = tf.slice(parm_encodings, [tf.cast(idx, dtype=tf.int32), 0], [1, -1])
 
                 sliced_parm_encoding = tf.expand_dims(sliced_parm_encoding, axis=0)
@@ -234,10 +236,10 @@ class IntegratorNetwork:
                                                                         shape_invariants=[tf.TensorShape([1, 1, 2*param_state_size]),
                                                                                             idx.get_shape(),
                                                                                             tf.TensorShape([1, None, 2*param_state_size]),
-                                                                                            tf.TensorShape([sequence_length, param_state_size])])
+                                                                                            tf.TensorShape([None, param_state_size])])
 
 
-            self.list_of_encodings = tf.slice(self.list_of_encodings, [0, 1, 0], [-1, -1, -1])
+            self.list_of_encodings = tf.slice(self.list_of_encodings, [0, 1, 0], [-1, -1, -1], name='next_encoding')
 
             self.loss_int = tf.reduce_mean(tf.square(self.list_of_encodings - tf.expand_dims(self.y, axis=0)))
             self.merged_int = tf.summary.scalar('Integrator Loss', self.loss_int)
@@ -257,16 +259,16 @@ class NetWork(layers):
         sdf = tf.placeholder(dtype=tf.float32, shape=(None,  voxel_side,  voxel_side,  voxel_side, 1), name='sdf')
 
         with tf.variable_scope('Boundary_conditions'):
-            self.encoded_sdf = self.encoder_network(sdf, sb_blocks=config.sb_blocks, n_filters=config.n_filters)
+            self.encoded_sdf = tf.identity(self.encoder_network(sdf, sb_blocks=config.sb_blocks, n_filters=config.n_filters), name='encoded_sdf')
 
         with tf.variable_scope('Encoder'):
-            c = self.encoder_network(x, sb_blocks=config.sb_blocks, n_filters=config.n_filters)
+            c = tf.identity(self.encoder_network(x, sb_blocks=config.sb_blocks, n_filters=config.n_filters), name= 'encoded_field')
 
         with tf.variable_scope('Latent_State'):
-            self.full_encoding = tf.concat((c, self.encoded_sdf), axis=1)
+            self.full_encoding = tf.concat((c, self.encoded_sdf), axis=1, name='full_encoding')
 
         with tf.variable_scope('Decoder'):
-            y = self.decoder_network(self.full_encoding, sb_blocks=config.sb_blocks, n_filters=config.n_filters)
+            y = tf.identity(self.decoder_network(self.full_encoding, sb_blocks=config.sb_blocks, n_filters=config.n_filters), name='decoder')
 
         with tf.variable_scope('Differentiate'):
             if not config.use_fem:

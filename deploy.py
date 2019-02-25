@@ -3,63 +3,76 @@ import numpy as np
 import config
 import os
 import fetch_data
+import matplotlib.pyplot as plt
+from matplotlib import animation
+import imageio
 
-
-def deploy_network(graph_path=config.save_freq, roll_out_length=0):
+def deploy_network():
     tf.reset_default_graph()
     feed_dict = fetch_data.get_volume(config.data_path, 1)
 
-    encoder = config.encoder_name + '.meta'
-    integrator = ''
-    if roll_out_length != 0:
-        integrator = config.integrator_name + '.meta'
-
-    path_encoder = os.path.join(graph_path, encoder)
-    path_integrator = os.path.join(graph_path, integrator)
-
-    try:
-        saver_encoder = tf.train.import_meta_graph(path_encoder)
-    except:
-        print('No meta graph in path')
-        exit()
+    for file in os.listdir(config.meta_graphs):
+        print(file)
+        if file.endswith('.ckpt.meta'):
+            try:
+                graph_handle = tf.train.import_meta_graph(os.path.join(config.meta_graphs, file))
+                print(graph_handle)
+                break
+            except IOError:
+                print('Cant import graph')
+                exit()
 
 
-    #with tf.Session() as sess:
-    #    graph = tf.get_default_graph()
-    #    sub_path = "./weights/"
+    with tf.Session() as sess:
+        graph = tf.get_default_graph()
+        sub_path = "./weights/"
 
-    #    saver_encoder.restore(sess, tf.train.latest_checkpoint(sub_path))
-    #    print('model restored')
+        graph_handle.restore(sess, tf.train.latest_checkpoint(config.meta_graphs))
+        print('Model restored')
+        search_dir = ''
 
-    #    placeholder = graph.get_tensor_by_name("inputframe:0")
-    #    phase = graph.get_tensor_by_name("phase:0")
-    #    op_to_restore = graph.get_tensor_by_name("output:0")
+        if os.path.isdir(config.alt_dir):
+            search_dir = config.alt_dir
+        else:
+            search_dir = config.data_path
 
-    #    test_batch = [data_in]
+        input_sequence, input_0 = fetch_data.get_volume(search_dir, 1, sequential=True,
+                                                        sequence_length=config.sequence_length,
+                                                        inference=True)
 
-    #    for i in range(future_roll_out_length):
 
-    #        feed_dict = {placeholder: test_batch, phase: [0]}
-    #        case = sess.run(op_to_restore, feed_dict=feed_dict)
-    #        case_stack = np.transpose(case,[0,3,1,2])
+        full_encoding = graph.get_tensor_by_name("Latent_State/full_encoding:0")
+        encoded_sdf = graph.get_tensor_by_name("Boundary_conditions/encoded_sdf:0")
+        start_encoding = sess.run([full_encoding], input_0)
+        parameter_encodings, label_encodings = sess.run([encoded_sdf, full_encoding], input_sequence)
 
-    #        test_batch = np.hstack([test_batch, case_stack])
-    #        test_batch = [test_batch[0][1:][:][:]]
+        integrator_feed_dict = {'label_encodings:0': label_encodings, 'parameter_encodings:0': parameter_encodings,
+                                'start_encoding:0': start_encoding, 'phase:0': True,
+                                "sequence_length:0": config.sequence_length}
 
-    #        # Displaying for later
-    #        case = np.squeeze(case)
 
-    #        span_x = 128 - gen_frame_x
-    #        span_y = 128 - gen_frame_y
 
-    #        pad_xmin = int(np.floor(span_x / 2))
-    #        pad_xmax = int(np.ceil(span_x / 2))
+        roll_out = graph.get_tensor_by_name("Integrater_Network/next_encoding:0")
+        encoded_states = sess.run(roll_out, integrator_feed_dict)
+        decoder = graph.get_tensor_by_name("Decoder/decoder:0")
+        field_sequence = sess.run(decoder, feed_dict={'Latent_State/full_encoding:0': np.squeeze(encoded_states)})
+        gt_sequence = sess.run(decoder, feed_dict={'Latent_State/full_encoding:0': np.squeeze(label_encodings)})
 
-    #        pad_ymin = int(np.floor(span_y / 2))
-    #        pad_ymax = int(np.ceil(span_y / 2))
+        plt.close('all')
+        images = []
+        for i in range(np.shape(field_sequence)[0]):
+            rec = np.squeeze(field_sequence[i, :, 16, :, :])
+            gt = np.squeeze(gt_sequence[i, :, 16, :, :])
+            error = np.abs(rec - gt)
+            stacked = np.uint8(255.0*np.concatenate(((rec - np.min(rec))/np.max(rec - np.min(rec)),
+                                                     (gt - np.min(gt))/np.max(gt - np.min(gt)),
+                                                     (error - np.min(error))/np.max(error - np.min(error))),
+                                                    axis=1))
+            images.append(stacked)
 
-    #        tfb = case[pad_xmin:(pad_xmin + np.shape(lat_f)[0]),pad_ymin:(pad_ymin +np.shape(lat_f)[1])]
-    #        predictions[i][:][:] = tfb
+        print('gif saved at:', os.path.join(config.output_dir, 'field_evo.gif'))
+        path = os.path.join(config.output_dir, 'field_evo.gif')
+        imageio.mimsave(path, images)
 
-    #    return predictions
+
 

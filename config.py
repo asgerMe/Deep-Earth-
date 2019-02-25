@@ -7,12 +7,15 @@ sb_blocks = 1
 velocity_field_name = 'SIM_data.npy'
 n_filters = 16
 use_fem=False
+data_size = 32
+alt_dir = ''
+inference = True
 
 f_tensorboard = 10
 
 train_integrator_network = True
-f_integrator_network = 100
-
+f_integrator_network = 0
+sequence_length=30
 save_freq = 5000
 
 tensor_board = ''

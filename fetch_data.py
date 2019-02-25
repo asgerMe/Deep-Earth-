@@ -2,7 +2,7 @@ import numpy as np
 import os
 import config
 
-def get_volume(data_path, batch_size=1, external_encoding=None, sequential=False, sequence_length=1):
+def get_volume(data_path, batch_size=1, external_encoding=None, sequential=False, sequence_length=1, inference=False):
 
     list_files = os.listdir(data_path)
     batch = []
@@ -39,7 +39,11 @@ def get_volume(data_path, batch_size=1, external_encoding=None, sequential=False
             try:
                 data = np.load(full_path, mmap_mode='r+')
                 dim1 = np.shape(data)[0]
-                random_time_index = np.random.randint(0, dim1)
+
+                if not inference:
+                    random_time_index = np.random.randint(0, dim1)
+                else:
+                    random_time_index = 0
 
                 batch = data[random_time_index:random_time_index+sequence_length, :, :]
 
