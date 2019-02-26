@@ -4,9 +4,8 @@ import config
 import fetch_data
 import network as nn
 import os
-import deploy
+import time
 
-import helper_functions as hf
 
 def train_network():
 
@@ -18,18 +17,21 @@ def train_network():
         int_net = nn.IntegratorNetwork(param_state_size=config.param_state_size)
 
     init = tf.global_variables_initializer()
-
+    SCF = fetch_data.get_scaling_factor(config.data_path)
     with tf.Session() as sess:
         sess.run(init)
-        writer = tf.summary.FileWriter(config.tensor_board)
+
+        sub_dir = os.path.join(config.tensor_board, time.strftime("%Y%m%d-%H%M%S"))
+        os.mkdir(sub_dir)
+        writer = tf.summary.FileWriter(sub_dir)
         writer.add_graph(sess.graph)
-        meta_graph_def = tf.train.export_meta_graph(filename=os.path.join(config.tensor_board, 'my-model.meta'))
 
         saver = tf.train.Saver(tf.global_variables())
         store_integrator_loss_tb = 0
         store_integrator_loss = -1
+
         for i in range(config.training_runs):
-            inputs = fetch_data.get_volume(config.data_path, 1)
+            inputs = fetch_data.get_volume(config.data_path, 1, scaling_factor=SCF)
             loss, _ = sess.run([net.loss, net.train], inputs)
 
             if config.f_integrator_network:

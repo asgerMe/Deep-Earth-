@@ -279,8 +279,8 @@ class NetWork(layers):
                 dx = self.FEM_diffential(x)
 
         with tf.variable_scope('Loss_Estimation'):
-            self.l2_loss_v = tf.reduce_mean(tf.square(y - x))
-            self.l2_loss_dv = tf.reduce_mean(tf.square(dy - dx))
+            self.l2_loss_v = tf.reduce_mean(tf.reduce_sum(tf.square(y - x), axis=4))
+            self.l2_loss_dv = tf.reduce_mean(tf.reduce_sum(tf.square(dy - dx), axis=4))
 
             self.loss = self.l2_loss_v + self.l2_loss_dv
 

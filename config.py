@@ -1,6 +1,6 @@
 training_runs = 1000000
 param_state_size = 8
-data_path = ''
+data_path = "D:\PhD\AI_Data"
 output_dir = ''
 grid_file = 'AI_Data0_30_10_grid_data.npy'
 sb_blocks = 1

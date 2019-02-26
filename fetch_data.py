@@ -2,10 +2,31 @@ import numpy as np
 import os
 import config
 
-def get_volume(data_path, batch_size=1, external_encoding=None, sequential=False, sequence_length=1, inference=False):
+def get_scaling_factor(data_path):
+    list_files = os.listdir(data_path)
+    print('Searching for scaling factor in', len(list_files), 'files')
+    scaling_factor = 1
+    if len(list_files):
+        for file in list_files:
+            try:
+                print(file)
+                data = np.load(os.path.join(data_path, file), mmap_mode='r+')
+                max_v = data.max()
+                print(max_v)
+                print(np.shape(data))
+                if abs(max_v) > scaling_factor:
+                    scaling_factor = abs(max_v)
+            except IOError:
+                continue
+    print(scaling_factor)
+    return scaling_factor
+
+
+def get_volume(data_path, batch_size=1, external_encoding=None, sequential=False, sequence_length=1, inference=False, scaling_factor=1):
 
     list_files = os.listdir(data_path)
     batch = []
+
 
     if not sequential:
         for i in range(batch_size):
@@ -20,7 +41,7 @@ def get_volume(data_path, batch_size=1, external_encoding=None, sequential=False
                 data = np.load(full_path, mmap_mode='r+')
                 dim1 = np.shape(data)[0]
                 random_time_index = np.random.randint(0, dim1)
-                data = data[random_time_index, :, :]
+                data = data[random_time_index, :, :]/scaling_factor
                 batch.append(data)
 
             except IndexError:
@@ -90,8 +111,8 @@ def get_grid_diffs(file_name, data_path=config.data_path):
 
         return data
 
-    except IndexError:
-        print('could not open file')
+    except FileNotFoundError:
+        print('No grid found')
         return 0
 
 
