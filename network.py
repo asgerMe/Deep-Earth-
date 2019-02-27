@@ -273,7 +273,7 @@ class NetWork(layers, train_schedule):
             c = tf.identity(self.encoder_network(x, sb_blocks=config.sb_blocks, n_filters=config.n_filters), name= 'encoded_field')
 
         with tf.variable_scope('Latent_State'):
-            self.full_encoding = tf.concat((c, self.encoded_sdf), axis=1, name='full_encoding')
+            self.full_encoding = tf.tanh(tf.concat((c, self.encoded_sdf), axis=1, name='full_encoding'))
 
         with tf.variable_scope('Decoder'):
             y = tf.identity(self.decoder_network(self.full_encoding, sb_blocks=config.sb_blocks, n_filters=config.n_filters), name='decoder')
@@ -311,7 +311,6 @@ class NetWork(layers, train_schedule):
         x = tf.layers.conv3d(x,   strides=(1, 1, 1),
                                   kernel_size=(3, 3, 3),
                                   filters=3, padding='SAME',
-                                  activation=tf.nn.leaky_relu,
                                   name='output_convolution')
         return x
 

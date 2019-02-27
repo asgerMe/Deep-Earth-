@@ -17,7 +17,7 @@ def train_network():
         int_net = nn.IntegratorNetwork(param_state_size=config.param_state_size)
 
     init = tf.global_variables_initializer()
-    SCF = fetch_data.get_scaling_factor(config.data_path)
+    SCF = 1# fetch_data.get_scaling_factor(config.data_path)
     with tf.Session() as sess:
         sess.run(init)
 

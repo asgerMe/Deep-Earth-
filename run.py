@@ -19,11 +19,14 @@ parser.add_argument('-sg', '--graph_saving_freq', help= "save meta graph every n
 parser.add_argument('-tb', '--tensorboard_saving_freq', help= "save tensorboard plot every n frame. no saves when set to zero", default=50, type=int)
 parser.add_argument('-pd', '--prediction_length', help = "Number of frames to predict", default=30, type=int)
 parser.add_argument('-dp', '--deploy_path', default='', help="Alternative dir for inference data")
+parser.add_argument('-lr_min', '--min_learn_rate', default=0.000025, help="Minimum learning rate attained during cosine annealing")
+parser.add_argument('-lr_max', '--max_learn_rate', default=0.0001, help="Maximum learning rate attained during cosine annealing")
+parser.add_argument('-ep', '--period', default=5000, help="period of cosine annealing")
 
 args = parser.parse_args()
 
 config.data_path = args.input_dir
-#config.param_state_size = args.latent_state_size
+config.param_state_size = args.latent_state_size
 config.n_filters = args.filters
 config.output_dir = args.output_dir
 config.save_freq = args.graph_saving_freq
@@ -32,6 +35,9 @@ config.sb_blocks = args.small_blocks
 config.f_integrator_network = args.train_integrator
 config.sequence_length=args.prediction_length
 config.alt_dir = args.deploy_path
+config.lr_max = args.max_learn_rate
+config.lr_min = args.min_learn_rate
+config.period = args.period
 
 if not os.path.isdir(config.output_dir):
     print('WARNING - output dir is not valid. Meta graphs are not saved')
