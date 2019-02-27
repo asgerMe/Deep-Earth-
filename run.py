@@ -23,7 +23,7 @@ parser.add_argument('-dp', '--deploy_path', default='', help="Alternative dir fo
 args = parser.parse_args()
 
 config.data_path = args.input_dir
-config.param_state_size = args.latent_state_size
+#config.param_state_size = args.latent_state_size
 config.n_filters = args.filters
 config.output_dir = args.output_dir
 config.save_freq = args.graph_saving_freq

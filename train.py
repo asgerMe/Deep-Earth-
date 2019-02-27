@@ -32,7 +32,8 @@ def train_network():
 
         for i in range(config.training_runs):
             inputs = fetch_data.get_volume(config.data_path, 1, scaling_factor=SCF)
-            loss, _ = sess.run([net.loss, net.train], inputs)
+            inputs['Train/step:0'] = i
+            loss, _ , lr = sess.run([net.loss, net.train, net.lr], inputs)
 
             if config.f_integrator_network:
                 if i % config.f_integrator_network == 0:
@@ -75,5 +76,5 @@ def train_network():
 
 
             if not i % 10:
-                print('Training Run', i, '//  Encoder Loss:', loss, '//  Integrator Loss', store_integrator_loss)
+                print('Training Run', i, 'Learning Rate', lr ,'//  Encoder Loss:', loss, '//  Integrator Loss', store_integrator_loss)
 

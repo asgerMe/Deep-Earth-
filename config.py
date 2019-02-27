@@ -10,6 +10,9 @@ use_fem=False
 data_size = 32
 alt_dir = ''
 inference = True
+lr_min = 0.000025
+lr_max = 0.0001
+lr_update = 'decay'
 
 f_tensorboard = 10
 

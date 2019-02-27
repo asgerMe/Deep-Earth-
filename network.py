@@ -3,6 +3,14 @@ import numpy as np
 import fetch_data as fd
 import config
 
+class train_schedule:
+
+    @staticmethod
+    def cosine_annealing(step, max_step, lr_min, lr_max):
+        g_lr = tf.Variable(lr_max, name='g_lr')
+        g_lr_update = tf.assign(g_lr, lr_min + 0.5 * (lr_max - lr_min) * ( tf.cos(tf.cast(step, tf.float32) * np.pi / max_step) + 1), name='g_lr_update')
+        return g_lr_update
+
 class layers:
 
     def __init__(self):
@@ -30,7 +38,7 @@ class layers:
                                         kernel_size=(3, 3, 3),
                                         activation=tf.nn.leaky_relu,
                                         padding='SAME',
-                                        name=weight_name)
+                                        name=weight_name,  kernel_initializer=tf.contrib.layers.xavier_initializer() )
             output = conv_layer
 
         if x.get_shape().as_list()[4] == n_filters:
@@ -243,10 +251,10 @@ class IntegratorNetwork:
 
             self.loss_int = tf.reduce_mean(tf.square(self.list_of_encodings - tf.expand_dims(self.y, axis=0)))
             self.merged_int = tf.summary.scalar('Integrator Loss', self.loss_int)
-            self.train_int = tf.train.AdamOptimizer(0.0001).minimize(self.loss_int)
+            self.train_int = tf.train.AdamOptimizer(beta1=0.5).minimize(self.loss_int)
 
 
-class NetWork(layers):
+class NetWork(layers, train_schedule):
 
     def __init__(self, voxel_side, param_state_size=8):
         super(NetWork, self).__init__()
@@ -259,7 +267,7 @@ class NetWork(layers):
         sdf = tf.placeholder(dtype=tf.float32, shape=(None,  voxel_side,  voxel_side,  voxel_side, 1), name='sdf')
 
         with tf.variable_scope('Boundary_conditions'):
-            self.encoded_sdf = tf.identity(self.encoder_network(sdf, sb_blocks=config.sb_blocks, n_filters=config.n_filters), name='encoded_sdf')
+            self.encoded_sdf = tf.identity(self.encoder_network(sdf, sb_blocks=1, n_filters=8), name='encoded_sdf')
 
         with tf.variable_scope('Encoder'):
             c = tf.identity(self.encoder_network(x, sb_blocks=config.sb_blocks, n_filters=config.n_filters), name= 'encoded_field')
@@ -279,13 +287,15 @@ class NetWork(layers):
                 dx = self.FEM_diffential(x)
 
         with tf.variable_scope('Loss_Estimation'):
-            self.l2_loss_v = tf.reduce_mean(tf.reduce_sum(tf.square(y - x), axis=4))
+            self.l2_loss_v = tf.reduce_mean(tf.reduce_sum(tf.square(y - x), axis= 4))
             self.l2_loss_dv = tf.reduce_mean(tf.reduce_sum(tf.square(dy - dx), axis=4))
 
             self.loss = self.l2_loss_v + self.l2_loss_dv
 
         with tf.variable_scope('Train'):
-            self.train = tf.train.AdamOptimizer(0.0001).minimize(self.loss)
+            self.step = tf.placeholder(dtype=tf.int32, name='step')
+            self.lr = train_schedule.cosine_annealing(lr_max=0.0001, lr_min=0.000025, max_step= 5000, step=self.step)
+            self.train = tf.train.AdamOptimizer(learning_rate=self.lr, beta1=0.5).minimize(self.loss)
 
         tf.summary.scalar('Encoder Loss', self.loss)
         tf.summary.scalar('Encoder Field Loss', self.l2_loss_v)
@@ -294,7 +304,7 @@ class NetWork(layers):
 
     def decoder_network(self, x, sb_blocks=1, n_filters=128):
         output_dim = pow(self.param_state_size, 3)*n_filters
-        x = tf.layers.dense(x, output_dim, activation=tf.nn.leaky_relu)
+        x = tf.layers.dense(x, output_dim, activation=tf.nn.leaky_relu, kernel_initializer= tf.contrib.layers.xavier_initializer())
         x = tf.reshape(x, shape=(-1, self.param_state_size, self.param_state_size, self.param_state_size, n_filters))
 
         x = self.BB(x, int(self.q), FEM=config.use_fem, sb_blocks=sb_blocks, n_filters=n_filters)
@@ -308,7 +318,7 @@ class NetWork(layers):
     def encoder_network(self, x, sb_blocks=1, n_filters=128):
         x = self.BB(x, int(self.q), FEM=config.use_fem, upsample=False, sb_blocks=sb_blocks, n_filters=n_filters)
         x = tf.contrib.layers.flatten(x)
-        c = tf.layers.dense(x, self.param_state_size, activation=tf.nn.leaky_relu)
+        c = tf.layers.dense(x, self.param_state_size, activation=tf.nn.leaky_relu, kernel_initializer=tf.contrib.layers.xavier_initializer())
         return c
 
 
