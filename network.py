@@ -38,7 +38,7 @@ class layers:
                                         kernel_size=(3, 3, 3),
                                         activation=tf.nn.leaky_relu,
                                         padding='SAME',
-                                        name=weight_name,  kernel_initializer=tf.contrib.layers.xavier_initializer() )
+                                        name=weight_name)
             output = conv_layer
 
         if x.get_shape().as_list()[4] == n_filters:
@@ -54,9 +54,16 @@ class layers:
                 x = self.geometric_SB(x, q, n_blocks=sb_blocks, upsample=upsample)
 
             if upsample:
-                x = self.upsample(x)
+                if not config.resample:
+                    x = self.resample_nearest_neighbour(x, 2.0)
+                else:
+                    x = self.upsample(x)
             else:
-                x = self.downsample(x)
+                if not config.resample:
+                    x = self.resample_nearest_neighbour(x, 1.0/2.0)
+                else:
+                    x = self.downsample(x)
+
         return x
 
     def trilinear_interpolation_kernel(self):
@@ -73,7 +80,6 @@ class layers:
 
 
     def upsample(self, x, interpolation=1):
-
 
         xdim = x.get_shape().as_list()[1]
         ydim = x.get_shape().as_list()[2]
@@ -102,6 +108,29 @@ class layers:
         x = tf.nn.conv3d(x, strides=(1, 2, 2, 2, 1), filter=self.trilinear_interpolation_kernel(), padding='SAME', name='downsample')
         x = tf.reshape(x, [-1, int(xdim/2), int(ydim/2), int(zdim/2), int(wdim)])
         return x
+
+    def resample_nearest_neighbour(self, x, scale):
+
+        d = int(x.get_shape().as_list()[1])
+        h = int(x.get_shape().as_list()[2])
+        w = int(x.get_shape().as_list()[3])
+        c = int(x.get_shape().as_list()[4])
+
+
+        hw = tf.reshape(tf.transpose(x, [0, 2, 3, 1, 4]), [-1, int(h), int(w), int(d * c)])
+        h *= scale
+        w *= scale
+
+        hw = tf.image.resize_nearest_neighbor(hw, (int(h), int(w)))
+        hw = tf.reshape(hw, [-1, int(h), int(w), int(d), int(c)])
+
+        dh = tf.reshape(tf.transpose(hw, [0,3,1,2,4]), [-1,int(d),int(h),int(w*c)])
+        d *= scale
+        dh = tf.image.resize_nearest_neighbor(dh, (int(d), int(h)))
+
+        return tf.reshape(dh, [-1, int(d), int(h), int(w), int(c)])
+
+
 
     def central_difference(self, x):
         x_stack = tf.unstack(x, axis=4)
@@ -263,51 +292,54 @@ class NetWork(layers, train_schedule):
         self.vx_log2 = np.log2(voxel_side)
         self.q = self.vx_log2 - np.log2(param_state_size)
 
-        x = tf.placeholder(dtype=tf.float32, shape=(None,  voxel_side,  voxel_side,  voxel_side, 3), name='velocity')
+        self.x = tf.placeholder(dtype=tf.float32, shape=(None,  voxel_side,  voxel_side,  voxel_side, 3), name='velocity')
         sdf = tf.placeholder(dtype=tf.float32, shape=(None,  voxel_side,  voxel_side,  voxel_side, 1), name='sdf')
 
         with tf.variable_scope('Boundary_conditions'):
             self.encoded_sdf = tf.identity(self.encoder_network(sdf, sb_blocks=1, n_filters=8), name='encoded_sdf')
 
         with tf.variable_scope('Encoder'):
-            c = tf.identity(self.encoder_network(x, sb_blocks=config.sb_blocks, n_filters=config.n_filters), name= 'encoded_field')
+            c = tf.identity(self.encoder_network(self.x, sb_blocks=config.sb_blocks, n_filters=config.n_filters), name= 'encoded_field')
 
         with tf.variable_scope('Latent_State'):
-            self.full_encoding = tf.tanh(tf.concat((c, self.encoded_sdf), axis=1, name='full_encoding'))
+            self.full_encoding = tf.sigmoid(tf.concat((c, self.encoded_sdf), axis=1, name='full_encoding'))
 
         with tf.variable_scope('Decoder'):
-            y = tf.identity(self.decoder_network(self.full_encoding, sb_blocks=config.sb_blocks, n_filters=config.n_filters), name='decoder')
+            y = tf.identity(self.decoder_network(self.full_encoding, sdf, sb_blocks=config.sb_blocks, n_filters=config.n_filters), name='decoder')
 
         with tf.variable_scope('Differentiate'):
             if not config.use_fem:
                 dy = self.central_difference(y)
-                dx = self.central_difference(x)
+                dx = self.central_difference(self.x)
             else:
                 dy = self.FEM_diffential(y)
-                dx = self.FEM_diffential(x)
+                dx = self.FEM_diffential(self.x)
 
         with tf.variable_scope('Loss_Estimation'):
-            self.l2_loss_v = tf.reduce_mean(tf.reduce_sum(tf.square(y - x), axis= 4))
-            self.l2_loss_dv = tf.reduce_mean(tf.reduce_sum(tf.square(dy - dx), axis=4))
+            self.l2_loss_v = tf.reduce_mean(tf.abs(y - self.x))
+            self.l2_loss_dv = tf.reduce_mean(tf.abs(dy - dx))
 
-            self.loss = self.l2_loss_v + self.l2_loss_dv
+            self.loss = self.l2_loss_v = self.l2_loss_dv
 
         with tf.variable_scope('Train'):
             self.step = tf.placeholder(dtype=tf.int32, name='step')
-            self.lr = train_schedule.cosine_annealing(lr_max=0.0001, lr_min=0.000025, max_step= 5000, step=self.step)
+            self.lr = train_schedule.cosine_annealing(lr_max=config.lr_max, lr_min=config.lr_min, max_step= config.period, step=self.step)
             self.train = tf.train.AdamOptimizer(learning_rate=self.lr, beta1=0.5).minimize(self.loss)
 
         tf.summary.scalar('Encoder Loss', self.loss)
         tf.summary.scalar('Encoder Field Loss', self.l2_loss_v)
         tf.summary.scalar('Encoder Gradient Loss', self.l2_loss_dv)
+        tf.summary.histogram('Latent State', self.full_encoding)
         self.merged = tf.summary.merge_all()
 
-    def decoder_network(self, x, sb_blocks=1, n_filters=128):
+    def decoder_network(self, x, sdf, sb_blocks=1, n_filters=128):
         output_dim = pow(self.param_state_size, 3)*n_filters
-        x = tf.layers.dense(x, output_dim, activation=tf.nn.leaky_relu, kernel_initializer= tf.contrib.layers.xavier_initializer())
+        for i in range(config.encoder_mlp_layers):
+            x = tf.layers.dense(x, output_dim/(i + 1), activation=tf.nn.leaky_relu)
         x = tf.reshape(x, shape=(-1, self.param_state_size, self.param_state_size, self.param_state_size, n_filters))
 
         x = self.BB(x, int(self.q), FEM=config.use_fem, sb_blocks=sb_blocks, n_filters=n_filters)
+        x = tf.concat((x, sdf), axis=4)
         x = tf.layers.conv3d(x,   strides=(1, 1, 1),
                                   kernel_size=(3, 3, 3),
                                   filters=3, padding='SAME',
@@ -317,7 +349,10 @@ class NetWork(layers, train_schedule):
     def encoder_network(self, x, sb_blocks=1, n_filters=128):
         x = self.BB(x, int(self.q), FEM=config.use_fem, upsample=False, sb_blocks=sb_blocks, n_filters=n_filters)
         x = tf.contrib.layers.flatten(x)
-        c = tf.layers.dense(x, self.param_state_size, activation=tf.nn.leaky_relu, kernel_initializer=tf.contrib.layers.xavier_initializer())
-        return c
+        for i in range(config.encoder_mlp_layers):
+            idx = (config.encoder_mlp_layers - i)
+            x = tf.layers.dense(x, idx*self.param_state_size, activation=tf.nn.leaky_relu)
+
+        return x
 
 

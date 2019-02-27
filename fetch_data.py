@@ -10,15 +10,16 @@ def get_scaling_factor(data_path):
         for file in list_files:
             try:
                 print(file)
-                data = np.load(os.path.join(data_path, file), mmap_mode='r+')
-                max_v = data.max()
-                print(max_v)
+                data = np.load(os.path.join(data_path, file), mmap_mode='r')
+                max_v = np.amax(data[:, 1:4, :, :, :])
                 print(np.shape(data))
+                del data
+                print(max_v)
                 if abs(max_v) > scaling_factor:
                     scaling_factor = abs(max_v)
             except IOError:
                 continue
-    print(scaling_factor)
+    print('Largest v component found:', scaling_factor)
     return scaling_factor
 
 
@@ -33,15 +34,17 @@ def get_volume(data_path, batch_size=1, external_encoding=None, sequential=False
             try:
                 random_file_name = list_files[np.random.randint(0, np.size(list_files))]
                 full_path = os.path.join(data_path, random_file_name)
+
             except ValueError:
                 print('no suitable files in path')
                 exit()
 
             try:
-                data = np.load(full_path, mmap_mode='r+')
+                data = np.load(full_path, mmap_mode='r')
                 dim1 = np.shape(data)[0]
                 random_time_index = np.random.randint(0, dim1)
-                data = data[random_time_index, :, :]/scaling_factor
+
+                data = data[random_time_index, :, :]
                 batch.append(data)
 
             except IndexError:
@@ -89,11 +92,11 @@ def get_volume(data_path, batch_size=1, external_encoding=None, sequential=False
     sdf = np.expand_dims(batch[:, 0, :, :, :], 4)
     velocity = np.moveaxis(batch[:, 1:4, :, :, :], 1, 4)
 
-    feed_dict = {'sdf:0': sdf, 'velocity:0': velocity}
+    feed_dict = {'sdf:0': sdf, 'velocity:0': velocity/scaling_factor}
     if not sequential:
         return feed_dict
     else:
-        feed_dict_0 = {'sdf:0': [sdf[0, :, :, :, :]], 'velocity:0': [velocity[0, :, :, :, :]]}
+        feed_dict_0 = {'sdf:0': [sdf[0, :, :, :, :]], 'velocity:0': [velocity[0, :, :, :, :]/scaling_factor]}
         return feed_dict, feed_dict_0
 
 def get_grid_diffs(file_name, data_path=config.data_path):

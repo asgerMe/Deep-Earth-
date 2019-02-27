@@ -17,7 +17,7 @@ def train_network():
         int_net = nn.IntegratorNetwork(param_state_size=config.param_state_size)
 
     init = tf.global_variables_initializer()
-    SCF = 1# fetch_data.get_scaling_factor(config.data_path)
+    SCF = fetch_data.get_scaling_factor(config.data_path)
     with tf.Session() as sess:
         sess.run(init)
 
@@ -32,8 +32,9 @@ def train_network():
 
         for i in range(config.training_runs):
             inputs = fetch_data.get_volume(config.data_path, 1, scaling_factor=SCF)
+
             inputs['Train/step:0'] = i
-            loss, _ , lr = sess.run([net.loss, net.train, net.lr], inputs)
+            loss, lr, _ = sess.run([net.loss, net.lr, net.train], inputs)
 
             if config.f_integrator_network:
                 if i % config.f_integrator_network == 0:
