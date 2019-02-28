@@ -5,6 +5,7 @@ import fetch_data
 import network as nn
 import os
 import time
+import imageio
 
 
 def train_network():
@@ -14,7 +15,7 @@ def train_network():
     net = nn.NetWork(config.data_size, param_state_size=config.param_state_size)
 
     if config.train_integrator_network:
-        int_net = nn.IntegratorNetwork(param_state_size=config.param_state_size)
+        int_net = nn.IntegratorNetwork(param_state_size=config.param_state_size, sdf_state_size=config.sdf_state)
 
     init = tf.global_variables_initializer()
     SCF = fetch_data.get_scaling_factor(config.data_path)
@@ -34,15 +35,22 @@ def train_network():
             inputs = fetch_data.get_volume(config.data_path, 1, scaling_factor=SCF)
 
             inputs['Train/step:0'] = i
-            loss, lr, _ = sess.run([net.loss, net.lr, net.train], inputs)
+
+            if config.f_tensorboard and os.path.isdir(config.tensor_board):
+                if i % (config.f_tensorboard * 10) == 0 and config.f_tensorboard != 0:
+                    loss, lr, _, merged = sess.run([net.loss, net.lr, net.train, net.merged], inputs)
+                    writer.add_summary(merged, i)
+                    print('Saving tensorboard')
+
+            else:
+                loss, lr, _ = sess.run([net.loss, net.lr, net.train], inputs)
 
             if config.f_integrator_network:
-                if i % config.f_integrator_network == 0 and i > 50000:
+                if i % config.f_integrator_network == 0 and i > config.start_integrator_training:
                     input_sequence, input_0 = fetch_data.get_volume(config.data_path, 1, sequential=True, sequence_length=config.sequence_length)
                     parameter_encodings, label_encodings = sess.run([net.encoded_sdf, net.full_encoding], input_sequence)
 
                     start_encoding = sess.run([net.full_encoding], input_0)
-
                     integrator_feed_dict = {'label_encodings:0': label_encodings, 'parameter_encodings:0': parameter_encodings,
                                         'start_encoding:0': start_encoding, 'phase:0': True, "sequence_length:0": config.sequence_length}
 
@@ -57,15 +65,7 @@ def train_network():
                     print('Saving graph')
 
 
-            if config.f_tensorboard and os.path.isdir(config.tensor_board):
-                if i % config.f_tensorboard == 0 and config.f_tensorboard != 0:
-                    merged = sess.run(net.merged, inputs)
-                    writer.add_summary(merged, i)
-                    #writer.add_summary(store_integrator_loss_tb, i)
-
-                    print('Saving tensorboard')
-
-            if i % (config.f_tensorboard*10) == 0 and config.f_tensorboard != 0:  # Record execution stats
+             # Record execution stats
                 run_options = tf.RunOptions(trace_level=tf.RunOptions.FULL_TRACE)
                 run_metadata = tf.RunMetadata()
                 _ = sess.run([net.train],
@@ -74,8 +74,34 @@ def train_network():
                                       run_metadata=run_metadata)
                 writer.add_run_metadata(run_metadata, 'step%d' % i)
 
-
-
             if not i % 10:
-                print('Training Run', i, 'Learning Rate', lr ,'//  Encoder Loss:', loss, '//  Integrator Loss', store_integrator_loss)
+                print('Training Run', i, 'Learning Rate', lr,'//  Encoder Loss:', loss, '//  Integrator Loss', store_integrator_loss)
 
+
+            if not i % 5000 and i > 100:
+                search_dir = config.output_dir
+                if os.path.isdir(config.alt_dir):
+                    search_dir = config.alt_dir
+                try:
+                    video_length = 2000
+                    MOVIE = []
+
+                    for F in range(video_length):
+                        try:
+                            test_input = fetch_data.get_volume(search_dir, batch_size=1, time_idx=F, scaling_factor=SCF)
+                        except IndexError:
+                            print('index out of range -> creating gif with stashed frames')
+                            break
+
+                        reconstructed_vel = sess.run(net.y, feed_dict=test_input)
+                        image = np.squeeze(reconstructed_vel[0, :, 16, :, 2])
+                        image = np.uint8(255*(image - np.min(image)) / np.max(image - np.min(image)))
+                        MOVIE.append(image)
+
+                    path = os.path.join(config.output_dir, 'test_vel_field_' + str(i) + '.gif')
+                    imageio.mimwrite(path, MOVIE)
+                    print('gif saved at:', os.path.join(config.output_dir, 'test_vel_field_' + str(i) + '.gif'))
+
+                except OSError:
+                    print('No valid .npy test file in output dir / alternative dir not found')
+                    continue

@@ -23,7 +23,7 @@ def get_scaling_factor(data_path):
     return scaling_factor
 
 
-def get_volume(data_path, batch_size=1, external_encoding=None, sequential=False, sequence_length=1, inference=False, scaling_factor=1):
+def get_volume(data_path, batch_size=1, time_idx = -1, sequential=False, sequence_length=1, inference=False, scaling_factor=1):
 
     list_files = os.listdir(data_path)
     batch = []
@@ -42,9 +42,11 @@ def get_volume(data_path, batch_size=1, external_encoding=None, sequential=False
             try:
                 data = np.load(full_path, mmap_mode='r')
                 dim1 = np.shape(data)[0]
-                random_time_index = np.random.randint(0, dim1)
 
-                data = data[random_time_index, :, :]
+                if time_idx == -1:
+                    time_idx = np.random.randint(0, dim1)
+
+                data = data[time_idx, :, :]
                 batch.append(data)
 
             except IndexError:

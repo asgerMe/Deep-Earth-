@@ -22,8 +22,11 @@ parser.add_argument('-dp', '--deploy_path', default='', help="Alternative dir fo
 parser.add_argument('-lr_min', '--min_learn_rate', default=0.0000025, help="Minimum learning rate attained during cosine annealing")
 parser.add_argument('-lr_max', '--max_learn_rate', default=0.0001, help="Maximum learning rate attained during cosine annealing")
 parser.add_argument('-ep', '--period', default=5000, help="period of cosine annealing")
-parser.add_argument('-tri', '--trilinear', action='store_true', help="use tri-linear interpolation for resampling and not nearest neighbour")
+parser.add_argument('-tri', '--trilinear', default=False, type = bool, help="use tri-linear interpolation for resampling and not nearest neighbour")
 parser.add_argument('-mlp', '--encoder_mlp_layers', default = 1, type = int,  help="MLP layers to use on each side of the latent state projection")
+parser.add_argument('-sdf', '--sdf_state_size', default = 2, type = int,  help="size of the boundary conditions encoding")
+parser.add_argument('-sti', '--start_integrator_training', default = 50000, type = int,  help="Training runs before the integrator starts training")
+
 args = parser.parse_args()
 
 config.data_path = args.input_dir
@@ -41,6 +44,10 @@ config.lr_max = args.max_learn_rate
 config.lr_min = args.min_learn_rate
 config.period = args.period
 config.encoder_mlp_layers = args.encoder_mlp_layers
+config.sdf_state = args.sdf_state_size
+config.start_integrator_training = args.start_integrator_training
+
+
 
 if not os.path.isdir(config.output_dir):
     print('WARNING - output dir is not valid. Meta graphs are not saved')

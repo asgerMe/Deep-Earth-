@@ -7,3 +7,4 @@ def check_path(path):
         return path
     else:
         return '../'
+

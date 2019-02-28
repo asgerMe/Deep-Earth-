@@ -17,6 +17,8 @@ lr_update = 'decay'
 resample = False
 period = 5000
 f_tensorboard = 10
+sdf_state=2
+start_integrator_training = 50000
 
 train_integrator_network = True
 f_integrator_network = 0

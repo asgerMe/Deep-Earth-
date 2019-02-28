@@ -55,9 +55,11 @@ class layers:
 
             if upsample:
                 if not config.resample:
-                    x = self.resample_nearest_neighbour(x, 2.0)
+                    with tf.variable_scope('nearest neighbour interpolation'):
+                        x = self.resample_nearest_neighbour(x, 2.0)
                 else:
-                    x = self.upsample(x)
+                    with tf.variable_scope('Tri-linear interpolation '):
+                        x = self.upsample(x)
             else:
                 x = tf.layers.conv3d(x, strides=(2, 2, 2),
                                      kernel_size=(3, 3, 3),
@@ -237,12 +239,12 @@ class layers:
 
 class IntegratorNetwork:
 
-    def __init__(self, param_state_size=8):
+    def __init__(self, param_state_size=8, sdf_state_size=8):
 
-        self.y = tf.placeholder(dtype=tf.float32, shape=(None, 2*param_state_size), name='label_encodings')
+        self.y = tf.placeholder(dtype=tf.float32, shape=(None, sdf_state_size  + param_state_size), name='label_encodings')
         sequence_length = tf.placeholder(dtype=tf.int32, name='sequence_length')
-        self.full_encoding = tf.placeholder(dtype=tf.float32, shape=(1, 1, 2*param_state_size), name='start_encoding')
-        self.parm_encodings = tf.placeholder(dtype=tf.float32, shape=(None, param_state_size), name= 'parameter_encodings')
+        self.full_encoding = tf.placeholder(dtype=tf.float32, shape=(1, 1, sdf_state_size + param_state_size), name='start_encoding')
+        self.parm_encodings = tf.placeholder(dtype=tf.float32, shape=(None, sdf_state_size), name= 'parameter_encodings')
         training = tf.placeholder(dtype=tf.bool, name='phase')
 
         with tf.variable_scope('Integrater_Network'):
@@ -259,7 +261,7 @@ class IntegratorNetwork:
                 sliced_parm_encoding = tf.expand_dims(sliced_parm_encoding, axis=0)
                 encoding = tf.concat((encoding, sliced_parm_encoding), axis=2)
 
-                encoding = encoding + tf.pad(T, tf.constant([[0, 0], [0, 0], [0, param_state_size]]), 'CONSTANT')
+                encoding = encoding + tf.pad(T, tf.constant([[0, 0], [0, 0], [0, sdf_state_size]]), 'CONSTANT')
                 idx = idx + 1
                 list_of_encodings = tf.concat((list_of_encodings, encoding), axis=1)
 
@@ -270,10 +272,10 @@ class IntegratorNetwork:
 
             idx = tf.constant(0)
             self.full_encoding, idx, self.list_of_encodings, self.parm_encodings = tf.while_loop(condition, body, [self.full_encoding, idx, self.list_of_encodings, self.parm_encodings],
-                                                                        shape_invariants=[tf.TensorShape([1, 1, 2*param_state_size]),
+                                                                        shape_invariants=[tf.TensorShape([1, 1, sdf_state_size + param_state_size]),
                                                                                             idx.get_shape(),
-                                                                                            tf.TensorShape([1, None, 2*param_state_size]),
-                                                                                            tf.TensorShape([None, param_state_size])])
+                                                                                            tf.TensorShape([1, None, sdf_state_size + param_state_size]),
+                                                                                            tf.TensorShape([None, sdf_state_size])])
 
 
             self.list_of_encodings = tf.slice(self.list_of_encodings, [0, 1, 0], [-1, -1, -1], name='next_encoding')
@@ -296,7 +298,7 @@ class NetWork(layers, train_schedule):
         sdf = tf.placeholder(dtype=tf.float32, shape=(None,  voxel_side,  voxel_side,  voxel_side, 1), name='sdf')
 
         with tf.variable_scope('Boundary_conditions'):
-            self.encoded_sdf = tf.identity(self.encoder_network(sdf, sb_blocks=1, n_filters=8), name='encoded_sdf')
+            self.encoded_sdf = tf.identity(self.encoder_network_sdf(sdf, sb_blocks=1, n_filters=8, output=config.sdf_state), name='encoded_sdf')
 
         with tf.variable_scope('Encoder'):
             c = tf.identity(self.encoder_network(self.x, sb_blocks=config.sb_blocks, n_filters=config.n_filters), name= 'encoded_field')
@@ -305,18 +307,18 @@ class NetWork(layers, train_schedule):
             self.full_encoding = (tf.concat((c, self.encoded_sdf), axis=1, name='full_encoding'))
 
         with tf.variable_scope('Decoder'):
-            y = tf.identity(self.decoder_network(self.full_encoding, sdf, sb_blocks=config.sb_blocks, n_filters=config.n_filters), name='decoder')
+            self.y = tf.identity(self.decoder_network(self.full_encoding, sdf, sb_blocks=config.sb_blocks, n_filters=config.n_filters), name='decoder')
 
         with tf.variable_scope('Differentiate'):
             if not config.use_fem:
-                dy = self.central_difference(y)
+                dy = self.central_difference(self.y)
                 dx = self.central_difference(self.x)
             else:
-                dy = self.FEM_diffential(y)
+                dy = self.FEM_diffential(self.y)
                 dx = self.FEM_diffential(self.x)
 
         with tf.variable_scope('Loss_Estimation'):
-            self.l2_loss_v = tf.reduce_mean(tf.abs(y - self.x))
+            self.l2_loss_v = tf.reduce_mean(tf.abs(self.y - self.x))
             self.l2_loss_dv = tf.reduce_mean(tf.abs(dy - dx))
 
             self.loss = self.l2_loss_v = self.l2_loss_dv
@@ -360,3 +362,14 @@ class NetWork(layers, train_schedule):
         return x
 
 
+    def encoder_network_sdf(self, x, sb_blocks=1, n_filters=8, output=8):
+        x = tf.layers.conv3d(x, strides=(1, 1, 1),
+                             kernel_size=(3, 3, 3),
+                             filters=n_filters, padding='SAME',
+                             name='input_convolution')
+
+        x = self.BB(x, int(self.q), FEM=config.use_fem, upsample=False, sb_blocks=sb_blocks, n_filters=n_filters)
+        x = tf.contrib.layers.flatten(x)
+        x = tf.layers.dense(x, output, activation=tf.nn.leaky_relu)
+
+        return x
