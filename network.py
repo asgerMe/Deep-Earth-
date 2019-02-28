@@ -49,7 +49,7 @@ class layers:
     def BB(self, x, bb_blocks=1, sb_blocks=1, n_filters=16, FEM=False, upsample=True):
         for q in range(bb_blocks):
             if not FEM:
-                x = self.SB(x, q, n_filters=n_filters, n_blocks=sb_blocks, upsample=upsample)
+                x = self.SB(x, q, n_filters= n_filters, n_blocks=sb_blocks, upsample=upsample)
             else:
                 x = self.geometric_SB(x, q, n_blocks=sb_blocks, upsample=upsample)
 
@@ -59,10 +59,10 @@ class layers:
                 else:
                     x = self.upsample(x)
             else:
-                if not config.resample:
-                    x = self.resample_nearest_neighbour(x, 1.0/2.0)
-                else:
-                    x = self.downsample(x)
+                x = tf.layers.conv3d(x, strides=(2, 2, 2),
+                                     kernel_size=(3, 3, 3),
+                                     filters= n_filters, padding='SAME',
+                                     name='down_sample_' + str(q))
 
         return x
 
@@ -251,7 +251,7 @@ class IntegratorNetwork:
             def body(encoding, idx, list_of_encodings, parm_encodings):
                 f1 = tf.nn.dropout(tf.layers.dense(encoding, 1024, activation=tf.nn.elu), keep_prob=0.9)
                 f2 = tf.nn.dropout(tf.layers.dense(f1, 512, activation=tf.nn.elu), keep_prob=0.9)
-                T = tf.nn.dropout(tf.layers.dense(f2, param_state_size, activation=tf.nn.elu), keep_prob=0.9)
+                T = tf.layers.dense(f2, param_state_size, activation=tf.nn.elu)
 
                 encoding = tf.slice(encoding,[0, 0, 0], [-1, -1, param_state_size])
                 sliced_parm_encoding = tf.slice(parm_encodings, [tf.cast(idx, dtype=tf.int32), 0], [1, -1])
@@ -302,7 +302,7 @@ class NetWork(layers, train_schedule):
             c = tf.identity(self.encoder_network(self.x, sb_blocks=config.sb_blocks, n_filters=config.n_filters), name= 'encoded_field')
 
         with tf.variable_scope('Latent_State'):
-            self.full_encoding = tf.sigmoid(tf.concat((c, self.encoded_sdf), axis=1, name='full_encoding'))
+            self.full_encoding = (tf.concat((c, self.encoded_sdf), axis=1, name='full_encoding'))
 
         with tf.variable_scope('Decoder'):
             y = tf.identity(self.decoder_network(self.full_encoding, sdf, sb_blocks=config.sb_blocks, n_filters=config.n_filters), name='decoder')
@@ -334,12 +334,13 @@ class NetWork(layers, train_schedule):
 
     def decoder_network(self, x, sdf, sb_blocks=1, n_filters=128):
         output_dim = pow(self.param_state_size, 3)*n_filters
-        for i in range(config.encoder_mlp_layers):
-            x = tf.layers.dense(x, output_dim/(i + 1), activation=tf.nn.leaky_relu)
-        x = tf.reshape(x, shape=(-1, self.param_state_size, self.param_state_size, self.param_state_size, n_filters))
+
+        x = tf.layers.dense(x, output_dim, activation=tf.nn.leaky_relu, name='decoder_dense')
+        x = tf.reshape(x, shape=(-1, self.param_state_size, self.param_state_size, self.param_state_size, n_filters), name='decoder_reshape')
 
         x = self.BB(x, int(self.q), FEM=config.use_fem, sb_blocks=sb_blocks, n_filters=n_filters)
-        x = tf.concat((x, sdf), axis=4)
+
+        x = tf.identity(tf.concat((x, sdf), axis=4), name='merge_sdf')
         x = tf.layers.conv3d(x,   strides=(1, 1, 1),
                                   kernel_size=(3, 3, 3),
                                   filters=3, padding='SAME',
@@ -347,11 +348,14 @@ class NetWork(layers, train_schedule):
         return x
 
     def encoder_network(self, x, sb_blocks=1, n_filters=128):
+        x = tf.layers.conv3d(x, strides=(1, 1, 1),
+                             kernel_size=(3, 3, 3),
+                             filters=n_filters, padding='SAME',
+                             name='input_convolution')
+
         x = self.BB(x, int(self.q), FEM=config.use_fem, upsample=False, sb_blocks=sb_blocks, n_filters=n_filters)
         x = tf.contrib.layers.flatten(x)
-        for i in range(config.encoder_mlp_layers):
-            idx = (config.encoder_mlp_layers - i)
-            x = tf.layers.dense(x, idx*self.param_state_size, activation=tf.nn.leaky_relu)
+        x = tf.layers.dense(x, self.param_state_size, activation=tf.nn.leaky_relu)
 
         return x
 

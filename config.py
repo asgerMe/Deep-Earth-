@@ -20,7 +20,7 @@ f_tensorboard = 10
 
 train_integrator_network = True
 f_integrator_network = 0
-sequence_length=30
+sequence_length = 30
 save_freq = 5000
 
 tensor_board = ''

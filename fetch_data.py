@@ -61,7 +61,7 @@ def get_volume(data_path, batch_size=1, external_encoding=None, sequential=False
                 exit()
 
             try:
-                data = np.load(full_path, mmap_mode='r+')
+                data = np.load(full_path, mmap_mode='r')
                 dim1 = np.shape(data)[0]
 
                 if not inference:
@@ -92,11 +92,11 @@ def get_volume(data_path, batch_size=1, external_encoding=None, sequential=False
     sdf = np.expand_dims(batch[:, 0, :, :, :], 4)
     velocity = np.moveaxis(batch[:, 1:4, :, :, :], 1, 4)
 
-    feed_dict = {'sdf:0': sdf, 'velocity:0': velocity/scaling_factor}
+    feed_dict = {'sdf:0': sdf, 'velocity:0': velocity / scaling_factor}
     if not sequential:
         return feed_dict
     else:
-        feed_dict_0 = {'sdf:0': [sdf[0, :, :, :, :]], 'velocity:0': [velocity[0, :, :, :, :]/scaling_factor]}
+        feed_dict_0 = {'sdf:0': [sdf[0, :, :, :, :]], 'velocity:0': [velocity[0, :, :, :, :] / scaling_factor]}
         return feed_dict, feed_dict_0
 
 def get_grid_diffs(file_name, data_path=config.data_path):

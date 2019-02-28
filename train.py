@@ -37,7 +37,7 @@ def train_network():
             loss, lr, _ = sess.run([net.loss, net.lr, net.train], inputs)
 
             if config.f_integrator_network:
-                if i % config.f_integrator_network == 0:
+                if i % config.f_integrator_network == 0 and i > 50000:
                     input_sequence, input_0 = fetch_data.get_volume(config.data_path, 1, sequential=True, sequence_length=config.sequence_length)
                     parameter_encodings, label_encodings = sess.run([net.encoded_sdf, net.full_encoding], input_sequence)
 
@@ -61,7 +61,7 @@ def train_network():
                 if i % config.f_tensorboard == 0 and config.f_tensorboard != 0:
                     merged = sess.run(net.merged, inputs)
                     writer.add_summary(merged, i)
-                    writer.add_summary(store_integrator_loss_tb, i)
+                    #writer.add_summary(store_integrator_loss_tb, i)
 
                     print('Saving tensorboard')
 

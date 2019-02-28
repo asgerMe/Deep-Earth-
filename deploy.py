@@ -55,19 +55,21 @@ def deploy_network():
         roll_out = graph.get_tensor_by_name("Integrater_Network/next_encoding:0")
         encoded_states = sess.run(roll_out, integrator_feed_dict)
         decoder = graph.get_tensor_by_name("Decoder/decoder:0")
-        field_sequence = sess.run(decoder, feed_dict={'Latent_State/full_encoding:0': np.squeeze(encoded_states)})
-        gt_sequence = sess.run(decoder, feed_dict={'Latent_State/full_encoding:0': np.squeeze(label_encodings)})
+        field_sequence = sess.run(decoder, feed_dict={'sdf:0': input_sequence['sdf:0'], 'Latent_State/full_encoding:0': np.squeeze(encoded_states)})
+        gt_sequence = sess.run(decoder, feed_dict={'sdf:0': input_sequence['sdf:0'], 'Latent_State/full_encoding:0': np.squeeze(label_encodings)})
 
         plt.close('all')
         images = []
+        vf_seq = input_sequence['velocity:0']
+
         for i in range(np.shape(field_sequence)[0]):
-            rec = np.squeeze(field_sequence[i, :, 16, :, :])
-            gt = np.squeeze(gt_sequence[i, :, 16, :, :])
+            rec = np.linalg.norm(np.squeeze(field_sequence[i, :, 16, :, :]), axis=2)
+            gt = np.linalg.norm(np.squeeze(gt_sequence[i, :, 16, :, :]), axis=2)
+            vf = np.linalg.norm(np.squeeze(vf_seq[i, :, 16, :, :]), axis=2)
             error = np.abs(rec - gt)
-            stacked = np.uint8(255.0*np.concatenate(((rec - np.min(rec))/np.max(rec - np.min(rec)),
-                                                     (gt - np.min(gt))/np.max(gt - np.min(gt)),
-                                                     (error - np.min(error))/np.max(error - np.min(error))),
-                                                    axis=1))
+
+            stacked = np.uint8(255.0*np.concatenate(((rec - np.min(rec))/np.max(rec - np.min(rec)), (gt - np.min(gt))/np.max(gt - np.min(gt)), (vf - np.min(vf))/np.max(vf - np.min(vf)), (error - np.min(error))/np.max(error - np.min(error))), axis=1))
+
             images.append(stacked)
 
         print('gif saved at:', os.path.join(config.output_dir, 'field_evo.gif'))
