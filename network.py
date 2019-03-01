@@ -2,14 +2,7 @@ import tensorflow as tf
 import numpy as np
 import fetch_data as fd
 import config
-
-class train_schedule:
-
-    @staticmethod
-    def cosine_annealing(step, max_step, lr_min, lr_max):
-        g_lr = tf.Variable(lr_max, name='g_lr')
-        g_lr_update = tf.assign(g_lr, lr_min + 0.5 * (lr_max - lr_min) * ( tf.cos(tf.cast(step, tf.float32) * np.pi / max_step) + 1), name='g_lr_update')
-        return g_lr_update
+import util
 
 class layers:
 
@@ -55,10 +48,10 @@ class layers:
 
             if upsample:
                 if not config.resample:
-                    with tf.variable_scope('nearest neighbour interpolation'):
+                    with tf.name_scope('nearest_neighbour_interpolation'):
                         x = self.resample_nearest_neighbour(x, 2.0)
                 else:
-                    with tf.variable_scope('Tri-linear interpolation '):
+                    with tf.name_scope('Tri_linear_interpolation'):
                         x = self.upsample(x)
             else:
                 x = tf.layers.conv3d(x, strides=(2, 2, 2),
@@ -67,18 +60,6 @@ class layers:
                                      name='down_sample_' + str(q))
 
         return x
-
-    def trilinear_interpolation_kernel(self):
-        kernel = np.asarray(
-            [[[1.0/32, 1.0/16, 1.0/32], [1.0/16, 1.0/8, 1.0/16], [1.0/32, 1.0/16, 1.0/32]],
-             [[1.0/16, 1.0/8, 1.0/16], [1.0/8, 1.0/4, 1.0/8], [1.0/16, 1.0/8, 1.0/16]],
-             [[1.0/32, 1.0/16, 1.0/32], [1.0/16, 1.0/8, 1.0/16], [1.0/32, 1.0/16, 1.0/32]]])
-
-        kernel = np.expand_dims(kernel, axis=3)
-        kernel = np.expand_dims(kernel, axis=4)
-        kernel = tf.constant(kernel, dtype=tf.float32)
-
-        return kernel
 
 
     def upsample(self, x, interpolation=1):
@@ -93,7 +74,7 @@ class layers:
 
         x = tf.expand_dims(x, axis=4)
 
-        x = tf.nn.conv3d_transpose(x, output_shape=[bdim, 2*xdim, 2*ydim, 2*zdim, 1], strides=(1, 2, 2, 2, 1), filter=self.trilinear_interpolation_kernel(), padding='SAME', name = 'upsample')
+        x = tf.nn.conv3d_transpose(x, output_shape=[bdim, 2*xdim, 2*ydim, 2*zdim, 1], strides=(1, 2, 2, 2, 1), filter=util.trilinear_interpolation_kernel(), padding='SAME', name = 'upsample')
         x = tf.reshape(x, [-1, int(2*xdim), int(2*ydim), int(2*zdim), int(wdim)])
         return x
 
@@ -282,10 +263,10 @@ class IntegratorNetwork:
 
             self.loss_int = tf.reduce_mean(tf.square(self.list_of_encodings - tf.expand_dims(self.y, axis=0)))
             self.merged_int = tf.summary.scalar('Integrator Loss', self.loss_int)
-            self.train_int = tf.train.AdamOptimizer(beta1=0.5).minimize(self.loss_int)
+            self.train_int = tf.train.AdamOptimizer(learning_rate=config.lr_max).minimize(self.loss_int)
 
 
-class NetWork(layers, train_schedule):
+class NetWork(layers):
 
     def __init__(self, voxel_side, param_state_size=8):
         super(NetWork, self).__init__()
@@ -325,7 +306,7 @@ class NetWork(layers, train_schedule):
 
         with tf.variable_scope('Train'):
             self.step = tf.placeholder(dtype=tf.int32, name='step')
-            self.lr = train_schedule.cosine_annealing(lr_max=config.lr_max, lr_min=config.lr_min, max_step= config.period, step=self.step)
+            self.lr = util.cosine_annealing(lr_max=config.lr_max, lr_min=config.lr_min, max_step= config.period, step=self.step)
             self.train = tf.train.AdamOptimizer(learning_rate=self.lr, beta1=0.5).minimize(self.loss)
 
         tf.summary.scalar('Encoder Loss', self.loss)

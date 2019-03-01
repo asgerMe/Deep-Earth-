@@ -5,7 +5,7 @@ import fetch_data
 import network as nn
 import os
 import time
-import imageio
+import util
 
 
 def train_network():
@@ -14,11 +14,12 @@ def train_network():
 
     net = nn.NetWork(config.data_size, param_state_size=config.param_state_size)
 
-    if config.train_integrator_network:
-        int_net = nn.IntegratorNetwork(param_state_size=config.param_state_size, sdf_state_size=config.sdf_state)
+    #if config.train_integrator_network:
+    #    int_net = nn.IntegratorNetwork(param_state_size=config.param_state_size, sdf_state_size=config.sdf_state)
 
     init = tf.global_variables_initializer()
     SCF = fetch_data.get_scaling_factor(config.data_path)
+
     with tf.Session() as sess:
         sess.run(init)
 
@@ -32,32 +33,17 @@ def train_network():
         store_integrator_loss = -1
 
         for i in range(config.training_runs):
-            inputs = fetch_data.get_volume(config.data_path, 1, scaling_factor=SCF)
 
+            inputs = fetch_data.get_volume(config.data_path, 1, scaling_factor=SCF)
             inputs['Train/step:0'] = i
 
-            if config.f_tensorboard and os.path.isdir(config.tensor_board):
-                if i % (config.f_tensorboard * 10) == 0 and config.f_tensorboard != 0:
-                    loss, lr, _, merged = sess.run([net.loss, net.lr, net.train, net.merged], inputs)
-                    writer.add_summary(merged, i)
-                    print('Saving tensorboard')
+            if i % config.f_tensorboard == 0 and config.f_tensorboard != 0 and os.path.isdir(config.tensor_board):
+                loss, lr, _, merged = sess.run([net.loss, net.lr, net.train, net.merged], inputs)
+                writer.add_summary(merged, i)
 
             else:
                 loss, lr, _ = sess.run([net.loss, net.lr, net.train], inputs)
 
-            if config.f_integrator_network:
-                if i % config.f_integrator_network == 0 and i > config.start_integrator_training:
-                    input_sequence, input_0 = fetch_data.get_volume(config.data_path, 1, sequential=True, sequence_length=config.sequence_length)
-                    parameter_encodings, label_encodings = sess.run([net.encoded_sdf, net.full_encoding], input_sequence)
-
-                    start_encoding = sess.run([net.full_encoding], input_0)
-                    integrator_feed_dict = {'label_encodings:0': label_encodings, 'parameter_encodings:0': parameter_encodings,
-                                        'start_encoding:0': start_encoding, 'phase:0': True, "sequence_length:0": config.sequence_length}
-
-                    _, int_loss, merged_int = sess.run([int_net.train_int, int_net.loss_int, int_net.merged_int], integrator_feed_dict)
-                    store_integrator_loss_tb = merged_int
-                    store_integrator_loss = int_loss
-                    print('Training integrator')
 
             if config.save_freq and os.path.isdir(config.meta_graphs):
                 if config.meta_graphs and i % config.save_freq == 0 and config.save_freq != 0 and config.save_freq != 0:
@@ -77,31 +63,76 @@ def train_network():
             if not i % 10:
                 print('Training Run', i, 'Learning Rate', lr,'//  Encoder Loss:', loss, '//  Integrator Loss', store_integrator_loss)
 
+            util.create_gif_encoder(sess, net, i=i, save_frequency=config.save_gif, SCF=SCF)
 
-            if not i % 5000 and i > 100:
-                search_dir = config.output_dir
-                if os.path.isdir(config.alt_dir):
-                    search_dir = config.alt_dir
-                try:
-                    video_length = 2000
-                    MOVIE = []
 
-                    for F in range(video_length):
-                        try:
-                            test_input = fetch_data.get_volume(search_dir, batch_size=1, time_idx=F, scaling_factor=SCF)
-                        except IndexError:
-                            print('index out of range -> creating gif with stashed frames')
-                            break
+def train_integrator():
+    graph = tf.get_default_graph()
+    graph_handle = 0
+    int_net = 0
+    if config.train_integrator_network:
+        int_net = nn.IntegratorNetwork(param_state_size=config.param_state_size, sdf_state_size=config.sdf_state)
 
-                        reconstructed_vel = sess.run(net.y, feed_dict=test_input)
-                        image = np.squeeze(reconstructed_vel[0, :, 16, :, 2])
-                        image = np.uint8(255*(image - np.min(image)) / np.max(image - np.min(image)))
-                        MOVIE.append(image)
+    init = tf.global_variables_initializer()
+    SCF = fetch_data.get_scaling_factor(config.data_path)
 
-                    path = os.path.join(config.output_dir, 'test_vel_field_' + str(i) + '.gif')
-                    imageio.mimwrite(path, MOVIE)
-                    print('gif saved at:', os.path.join(config.output_dir, 'test_vel_field_' + str(i) + '.gif'))
+    for file in os.listdir(config.meta_graphs):
+        print(file)
+        if file.endswith('.ckpt.meta'):
+            try:
+                graph_handle = tf.train.import_meta_graph(os.path.join(config.meta_graphs, file))
+                print(graph)
+                break
+            except IOError:
+                print('Cant import graph')
+                exit()
 
-                except OSError:
-                    print('No valid .npy test file in output dir / alternative dir not found')
-                    continue
+    with tf.Session() as sess:
+        sess.run(init)
+
+        int_path = os.path.join(config.meta_graphs, '/integrator')
+        if not os.path.isdir(int_path):
+            os.mkdir(os.path.join(int_path))
+
+        sub_dir = os.path.join(config.tensor_board, 'integrator_' + time.strftime("%Y%m%d-%H%M%S"))
+        os.mkdir(sub_dir)
+        writer = tf.summary.FileWriter(sub_dir)
+        writer.add_graph(sess.graph)
+
+        saver = tf.train.Saver(tf.global_variables())
+        store_integrator_loss_tb = 0
+        store_integrator_loss = -1
+
+        graph_handle.restore(sess, tf.train.latest_checkpoint(config.meta_graphs))
+        print('Model restored')
+
+        full_encoding = graph.get_tensor_by_name("Latent_State/full_encoding:0")
+        encoded_sdf = graph.get_tensor_by_name("Boundary_conditions/encoded_sdf:0")
+
+
+        for i in range(config.training_runs):
+            input_sequence, input_0 = fetch_data.get_volume(config.data_path, 1, sequential=True, sequence_length=config.sequence_length)
+
+            start_encoding = sess.run([full_encoding], input_0)
+            parameter_encodings, label_encodings = sess.run([encoded_sdf, full_encoding], input_sequence)
+
+            integrator_feed_dict = {'label_encodings:0': label_encodings,
+                                    'parameter_encodings:0': parameter_encodings,
+                                    'start_encoding:0': start_encoding, 'phase:0': True,
+                                    "sequence_length:0": config.sequence_length}
+
+
+            if i % config.f_tensorboard == 0 and config.f_tensorboard != 0 and os.path.isdir(config.tensor_board):
+                _, int_loss, merged_int = sess.run([int_net.train_int, int_net.loss_int, int_net.merged_int], integrator_feed_dict)
+                writer.add_summary(merged_int, i)
+            else:
+                _, int_loss = sess.run([int_net.train_int, int_net.loss_int, int_net.merged_int], integrator_feed_dict)
+
+
+            if not i % 10:
+                print('Training Run', i, 'Learning Rate', config.lr_max, '//  Encoder Loss:', -1, '//  Integrator Loss', int_loss)
+
+
+        if config.save_freq and os.path.isdir(int_path):
+            saver.save(sess, os.path.join(int_path, "trained_integrator_model.ckpt"))
+            print('Saving graph')
