@@ -13,7 +13,6 @@ def get_scaling_factor(data_path):
                 data = np.load(os.path.join(data_path, file), mmap_mode='r')
                 max_v = np.amax(data[:, 1:4, :, :, :])
                 print(np.shape(data))
-                del data
                 print(max_v)
                 if abs(max_v) > scaling_factor:
                     scaling_factor = abs(max_v)
@@ -35,7 +34,7 @@ def get_volume(data_path, batch_size=1, time_idx = -1, sequential=False, sequenc
             full_path=''
             try:
                 if time_idx == -1:
-                    random_file_name = list_files[np.random.randint(0, np.size(list_files))]
+                    random_file_name = list_files[np.random.randint(0, (np.size(list_files)-1) )]
                 else:
                     random_file_name = list_files[0]
                 full_path = os.path.join(data_path, random_file_name)
@@ -51,8 +50,8 @@ def get_volume(data_path, batch_size=1, time_idx = -1, sequential=False, sequenc
                 if time_idx == -1:
                     time_idx = np.random.randint(0, dim1)
 
-                data = data[time_idx, :, :]
-                batch.append(data)
+                data_slice = data[time_idx, :, :]
+                batch.append(data_slice)
 
             except IndexError:
                 print('could not open file')

@@ -1,8 +1,8 @@
 import argparse
 import config
 import train
-import deploy
 import os
+import util
 
 parser = argparse.ArgumentParser()
 parser.add_argument("input_dir", help="path to training fields / See ... for Houdini based data generator")
@@ -21,13 +21,13 @@ parser.add_argument('-tb', '--tensorboard_saving_freq', help= "save tensorboard 
 parser.add_argument('-pd', '--prediction_length', help = "Number of frames to predict", default=30, type=int)
 parser.add_argument('-dp', '--deploy_path', default='', help="Alternative dir for inference data")
 parser.add_argument('-lr_min', '--min_learn_rate', default=0.0000025, help="Minimum learning rate attained during cosine annealing")
-parser.add_argument('-lr_max', '--max_learn_rate', default=0.0001, help="Maximum learning rate attained during cosine annealing")
-parser.add_argument('-ep', '--period', default=5000, help="period of cosine annealing")
+parser.add_argument('-lr_max', '--max_learn_rate', default=0.00005, help="Maximum learning rate attained during cosine annealing")
+parser.add_argument('-ep', '--period', default=2500, help="period of cosine annealing")
 parser.add_argument('-tri', '--trilinear', action='store_true', help="use tri-linear interpolation for resampling and not nearest neighbour")
 parser.add_argument('-mlp', '--encoder_mlp_layers', default = 1, type = int,  help="MLP layers to use on each side of the latent state projection")
 parser.add_argument('-sdf', '--sdf_state_size', default = 2, type = int,  help="size of the boundary conditions encoding")
-parser.add_argument('-sti', '--start_integrator_training', default = 50000, type = int,  help="Training runs before the integrator starts training")
 parser.add_argument('-gif', '--gif_saver_f', default = 5000, type = int,  help="Frequency for saving gifs")
+parser.add_argument('-batch', '--batch_size', default = 1, type=int, help='Batch size for training')
 args = parser.parse_args()
 
 config.data_path = args.input_dir
@@ -38,7 +38,7 @@ config.output_dir = args.output_dir
 config.save_freq = args.graph_saving_freq
 config.f_tensorboard = args.tensorboard_saving_freq
 config.sb_blocks = args.small_blocks
-
+config.batch_size = args.batch_size
 config.sequence_length = args.sequence_length
 config.alt_dir = args.deploy_path
 config.lr_max = args.max_learn_rate
@@ -54,16 +54,27 @@ config.save_gif = args.gif_saver_f
 if not os.path.isdir(config.output_dir):
     print('WARNING - output dir is not valid. Meta graphs are not saved')
 else:
+
     meta_graphs= os.path.join(config.output_dir, 'saved_graphs')
     tensor_board= os.path.join(config.output_dir, 'saved_tensorboard')
 
-    if not os.path.isdir(meta_graphs):
-        os.mkdir(meta_graphs)
+    path_e = os.path.join(config.output_dir, 'saved_graphs/encoder/')
+    path_i = os.path.join(config.output_dir, 'saved_graphs/integrator/')
+
+    if not os.path.isdir(path_e):
+        os.mkdir(path_e)
+
+    if not os.path.isdir(path_i):
+        os.mkdir(path_i)
+
     if not os.path.isdir(tensor_board):
         os.mkdir(tensor_board)
 
     config.tensor_board=tensor_board
-    config.meta_graphs=meta_graphs
+    config.meta_graphs= meta_graphs
+    config.path_e = path_e
+    config.path_i = path_i
+
 
 if not os.path.isdir(config.data_path):
     print('Input dir is not valid')
@@ -74,5 +85,3 @@ elif args.train:
 elif args.train_integrator:
     train.train_integrator()
 
-elif not args.train:
-    deploy.deploy_network()

@@ -9,13 +9,8 @@ import util
 
 
 def train_network():
-
     tf.reset_default_graph()
-
     net = nn.NetWork(config.data_size, param_state_size=config.param_state_size)
-
-    #if config.train_integrator_network:
-    #    int_net = nn.IntegratorNetwork(param_state_size=config.param_state_size, sdf_state_size=config.sdf_state)
 
     init = tf.global_variables_initializer()
     SCF = fetch_data.get_scaling_factor(config.data_path)
@@ -33,8 +28,7 @@ def train_network():
         store_integrator_loss = -1
 
         for i in range(config.training_runs):
-
-            inputs = fetch_data.get_volume(config.data_path, 1, scaling_factor=SCF)
+            inputs = fetch_data.get_volume(config.data_path, batch_size=config.batch_size, scaling_factor=SCF)
             inputs['Train/step:0'] = i
 
             if i % config.f_tensorboard == 0 and config.f_tensorboard != 0 and os.path.isdir(config.tensor_board):
@@ -47,7 +41,7 @@ def train_network():
 
             if config.save_freq and os.path.isdir(config.meta_graphs):
                 if config.meta_graphs and i % config.save_freq == 0 and config.save_freq != 0 and config.save_freq != 0:
-                    saver.save(sess, os.path.join(config.meta_graphs, "trained_model.ckpt"))
+                    saver.save(sess, os.path.join(config.path_e, "trained_model.ckpt"))
                     print('Saving graph')
 
 
@@ -67,20 +61,23 @@ def train_network():
 
 
 def train_integrator():
+    tf.reset_default_graph()
     graph = tf.get_default_graph()
     graph_handle = 0
     int_net = 0
+
     if config.train_integrator_network:
         int_net = nn.IntegratorNetwork(param_state_size=config.param_state_size, sdf_state_size=config.sdf_state)
 
     init = tf.global_variables_initializer()
+
     SCF = fetch_data.get_scaling_factor(config.data_path)
 
-    for file in os.listdir(config.meta_graphs):
+    for file in os.listdir(config.path_e):
         print(file)
         if file.endswith('.ckpt.meta'):
             try:
-                graph_handle = tf.train.import_meta_graph(os.path.join(config.meta_graphs, file))
+                graph_handle = tf.train.import_meta_graph(os.path.join(config.path_e, file))
                 print(graph)
                 break
             except IOError:
@@ -89,10 +86,6 @@ def train_integrator():
 
     with tf.Session() as sess:
         sess.run(init)
-
-        int_path = os.path.join(config.meta_graphs, '/integrator')
-        if not os.path.isdir(int_path):
-            os.mkdir(os.path.join(int_path))
 
         sub_dir = os.path.join(config.tensor_board, 'integrator_' + time.strftime("%Y%m%d-%H%M%S"))
         os.mkdir(sub_dir)
@@ -103,7 +96,7 @@ def train_integrator():
         store_integrator_loss_tb = 0
         store_integrator_loss = -1
 
-        graph_handle.restore(sess, tf.train.latest_checkpoint(config.meta_graphs))
+        graph_handle.restore(sess, tf.train.latest_checkpoint(config.path_e))
         print('Model restored')
 
         full_encoding = graph.get_tensor_by_name("Latent_State/full_encoding:0")
@@ -126,13 +119,15 @@ def train_integrator():
                 _, int_loss, merged_int = sess.run([int_net.train_int, int_net.loss_int, int_net.merged_int], integrator_feed_dict)
                 writer.add_summary(merged_int, i)
             else:
-                _, int_loss = sess.run([int_net.train_int, int_net.loss_int, int_net.merged_int], integrator_feed_dict)
+                _, int_loss = sess.run([int_net.train_int, int_net.loss_int], integrator_feed_dict)
 
 
             if not i % 10:
                 print('Training Run', i, 'Learning Rate', config.lr_max, '//  Encoder Loss:', -1, '//  Integrator Loss', int_loss)
 
+            if config.save_freq and os.path.isdir(config.path_i):
+                if config.meta_graphs and i % config.save_freq == 0 and config.save_freq != 0 and config.save_freq != 0:
+                    saver.save(sess, os.path.join(config.path_i, "trained_integrator_model.ckpt"))
+                    print('Saving graph')
 
-        if config.save_freq and os.path.isdir(int_path):
-            saver.save(sess, os.path.join(int_path, "trained_integrator_model.ckpt"))
-            print('Saving graph')
+            util.create_gif_integrator(sess, int_net, graph, roll_out = 30, i=i, save_frequency=config.save_gif, SCF=SCF)

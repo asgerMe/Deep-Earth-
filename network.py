@@ -19,6 +19,7 @@ class layers:
 
     def SB(self, x, j, n_filters=16, n_blocks=1, upsample=True):
         output = x
+
         for i in range(n_blocks):
             if(upsample):
                 weight_name = 'SB_BLOCK_UP' + str(i) + str(j)
@@ -42,7 +43,12 @@ class layers:
     def BB(self, x, bb_blocks=1, sb_blocks=1, n_filters=16, FEM=False, upsample=True):
         for q in range(bb_blocks):
             if not FEM:
-                x = self.SB(x, q, n_filters= n_filters, n_blocks=sb_blocks, upsample=upsample)
+                if not upsample:
+                    filters = (1 + q)*n_filters
+                else:
+                    filters = n_filters
+
+                x = self.SB(x, q, n_filters=filters, n_blocks=sb_blocks, upsample=upsample)
             else:
                 x = self.geometric_SB(x, q, n_blocks=sb_blocks, upsample=upsample)
 
@@ -56,7 +62,7 @@ class layers:
             else:
                 x = tf.layers.conv3d(x, strides=(2, 2, 2),
                                      kernel_size=(3, 3, 3),
-                                     filters= n_filters, padding='SAME',
+                                     filters= (2+q)*n_filters, padding='SAME',
                                      name='down_sample_' + str(q))
 
         return x
@@ -232,9 +238,9 @@ class IntegratorNetwork:
             self.list_of_encodings = self.full_encoding
 
             def body(encoding, idx, list_of_encodings, parm_encodings):
-                f1 = tf.nn.dropout(tf.layers.dense(encoding, 1024, activation=tf.nn.elu), keep_prob=0.9)
-                f2 = tf.nn.dropout(tf.layers.dense(f1, 512, activation=tf.nn.elu), keep_prob=0.9)
-                T = tf.layers.dense(f2, param_state_size, activation=tf.nn.elu)
+                f1 = tf.nn.dropout(tf.layers.dense(encoding, 1024, activation=tf.nn.elu, name='layer_1'), keep_prob=0.9)
+                f2 = tf.nn.dropout(tf.layers.dense(f1, 512, activation=tf.nn.elu, name='layer_2'), keep_prob=0.9)
+                T = tf.layers.dense(f2, param_state_size, activation=tf.nn.elu, name='next_encoding')
 
                 encoding = tf.slice(encoding,[0, 0, 0], [-1, -1, param_state_size])
                 sliced_parm_encoding = tf.slice(parm_encodings, [tf.cast(idx, dtype=tf.int32), 0], [1, -1])
@@ -285,7 +291,7 @@ class NetWork(layers):
             c = tf.identity(self.encoder_network(self.x, sb_blocks=config.sb_blocks, n_filters=config.n_filters), name= 'encoded_field')
 
         with tf.variable_scope('Latent_State'):
-            self.full_encoding = (tf.concat((c, self.encoded_sdf), axis=1, name='full_encoding'))
+            self.full_encoding = tf.identity(tf.concat((c, self.encoded_sdf), axis=1), name='full_encoding')
 
         with tf.variable_scope('Decoder'):
             self.y = tf.identity(self.decoder_network(self.full_encoding, sdf, sb_blocks=config.sb_blocks, n_filters=config.n_filters), name='decoder')
@@ -302,7 +308,7 @@ class NetWork(layers):
             self.l2_loss_v = tf.reduce_mean(tf.abs(self.y - self.x))
             self.l2_loss_dv = tf.reduce_mean(tf.abs(dy - dx))
 
-            self.loss = self.l2_loss_v = self.l2_loss_dv
+            self.loss = self.l2_loss_v + self.l2_loss_dv
 
         with tf.variable_scope('Train'):
             self.step = tf.placeholder(dtype=tf.int32, name='step')
@@ -317,7 +323,6 @@ class NetWork(layers):
 
     def decoder_network(self, x, sdf, sb_blocks=1, n_filters=128):
         output_dim = pow(self.param_state_size, 3)*n_filters
-
         x = tf.layers.dense(x, output_dim, activation=tf.nn.leaky_relu, name='decoder_dense')
         x = tf.reshape(x, shape=(-1, self.param_state_size, self.param_state_size, self.param_state_size, n_filters), name='decoder_reshape')
 
@@ -354,3 +359,10 @@ class NetWork(layers):
         x = tf.layers.dense(x, output, activation=tf.nn.leaky_relu)
 
         return x
+
+
+
+
+
+
+

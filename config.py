@@ -21,6 +21,9 @@ sdf_state=2
 start_integrator_training = 50000
 save_gif = 2000
 
+path_e = ''
+path_i = ''
+
 train_integrator_network = True
 f_integrator_network = 0
 sequence_length = 30
@@ -31,3 +34,4 @@ meta_graphs = ''
 
 encoder_name = 'encoder'
 integrator_name = 'integrator'
+batch_size = 5
