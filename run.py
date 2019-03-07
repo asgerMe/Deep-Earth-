@@ -27,7 +27,10 @@ parser.add_argument('-tri', '--trilinear', action='store_true', help="use tri-li
 parser.add_argument('-mlp', '--encoder_mlp_layers', default = 1, type = int,  help="MLP layers to use on each side of the latent state projection")
 parser.add_argument('-sdf', '--sdf_state_size', default = 2, type = int,  help="size of the boundary conditions encoding")
 parser.add_argument('-gif', '--gif_saver_f', default = 5000, type = int,  help="Frequency for saving gifs")
-parser.add_argument('-batch', '--batch_size', default = 1, type=int, help='Batch size for training')
+parser.add_argument('-b', '--batch_size', default = 1, type=int, help='Batch size for training')
+parser.add_argument('-fem', '--use_geo_kernels', action='store_true', help="use tri-linear interpolation for resampling and not nearest neighbour")
+
+parser.add_argument('-g', '--grid_path', help='Path to grid dictionary')
 args = parser.parse_args()
 
 config.data_path = args.input_dir
@@ -47,8 +50,8 @@ config.period = args.period
 config.encoder_mlp_layers = args.encoder_mlp_layers
 config.sdf_state = args.sdf_state_size
 config.save_gif = args.gif_saver_f
-
-
+config.grid_dir = args.grid_path
+config.use_fem = args.use_geo_kernels
 
 
 if not os.path.isdir(config.output_dir):

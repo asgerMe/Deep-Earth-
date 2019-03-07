@@ -3,11 +3,31 @@ import numpy as np
 import fetch_data as fd
 import config
 import util
+import os
 
 class layers:
 
-    def __init__(self):
-        self.grid = tf.constant(fd.get_grid_diffs(config.grid_file, config.data_path), dtype=tf.float32)
+    def __init__(self, multi_hot):
+        self.grid_dict = ''
+
+        if config.use_fem:
+            try:
+                files = os.listdir(config.grid_dir)
+                print('Searching for grid in', files)
+                for file in files:
+                    if file.endswith('.npz'):
+                        print('Found grid:', file)
+                        self.grid_dict = np.load(os.path.join(config.grid_dir, file))
+
+                        break
+
+            except IOError:
+                print('WARNING - NO GRID DICT FOUND AT', config.grid_dir, '... Using regular conv nets')
+                config.use_fem = False
+
+            self.multi_hot = multi_hot
+
+
 
     def differential_kernel(self):
         kernel = np.asarray([[[0, 1, 0], [1, 1, 1], [0, 1, 0]], [[1, 1, 1], [1, 1, 1], [1, 1, 1]], [[0, 1, 0], [1, 1, 1], [0, 1, 0]]])
@@ -41,17 +61,14 @@ class layers:
         return output
 
     def BB(self, x, bb_blocks=1, sb_blocks=1, n_filters=16, FEM=False, upsample=True):
+
         for q in range(bb_blocks):
-            if not FEM:
-                if not upsample:
-                    filters = (1 + q)*n_filters
-                else:
-                    filters = n_filters
-
-                x = self.SB(x, q, n_filters=filters, n_blocks=sb_blocks, upsample=upsample)
+            if not upsample:
+                filters = (1 + q) * n_filters
             else:
-                x = self.geometric_SB(x, q, n_blocks=sb_blocks, upsample=upsample)
+                filters = n_filters
 
+            x = self.SB(x, q, n_filters=filters, n_blocks=sb_blocks, upsample=upsample)
             if upsample:
                 if not config.resample:
                     with tf.name_scope('nearest_neighbour_interpolation'):
@@ -141,88 +158,52 @@ class layers:
 
         return tf.squeeze(tf.stack(d_stack, axis=4), axis=5)
 
-    def FEM_diffential(self, x):
-
-        shape_x = x.get_shape().as_list()[1]
-        shape_y = x.get_shape().as_list()[2]
-        shape_z = x.get_shape().as_list()[3]
-        data_channels = x.get_shape().as_list()[4]
-
-        grid_channels = self.grid.get_shape().as_list()[4]
-
-        x = tf.einsum('qxyzk,qxyzt->qxyzkt', x, self.grid)
-        x = tf.reshape(x, shape=(-1, shape_x, shape_y, shape_z, data_channels * grid_channels))
-
-        unstack_output = tf.unstack(x, axis=4)
-        output_list = []
-        for i in unstack_output:
-            i = tf.expand_dims(i, axis=4)
-            slice_conv = tf.nn.conv3d(input=i,
-                                      filter=self.get_kernel(),
-                                      padding='SAME',
-                                      strides=(1, 1, 1, 1, 1))
-
-            output_list.append(slice_conv)
-
-        x = tf.squeeze(tf.stack(output_list, axis=4), axis=5)
-        return x
 
 
-    def geometric_SB(self, x, j, n_blocks=1, n_filters=16, upsample=True, kernel_width = 3, activation = None):
-
-        shape_x = x.get_shape().as_list()[1]
-        shape_y = x.get_shape().as_list()[2]
-        shape_z = x.get_shape().as_list()[3]
-        data_channels = x.get_shape().as_list()[4]
-
-        grid_x = self.grid.get_shape().as_list()[1]
-        grid_y = self.grid.get_shape().as_list()[2]
-        grid_z = self.grid.get_shape().as_list()[3]
-        grid_channels = self.grid.get_shape().as_list()[4]
-
-        ratio_x = grid_x / shape_x
-        ratio_y = grid_y / shape_y
-        ratio_z = grid_z / shape_z
-
-        max_subs = int(np.log2(np.max([ratio_x, ratio_y, ratio_z])))
-        _grid = self.grid
-        for i in range(max_subs):
-            _grid = self.downsample(_grid)
-
+    def geometric_SB(self, x, j, n_filters=16, n_blocks=1, upsample=True):
         output = x
-        output = tf.einsum('qxyzk,qxyzt->qxyzkt', output, _grid)
-        output = tf.reshape(output, shape=(-1, shape_x, shape_y, shape_z, data_channels*grid_channels))
-        unstack_output = tf.unstack(output, axis=4)
-        output_list = []
-        for i in unstack_output:
-            i = tf.expand_dims(i, axis=4)
-            slice_conv = tf.nn.conv3d(input=i,
-                                  filter=self.differential_kernel(),
-                                  padding='SAME',
-                                  strides=(1, 1, 1, 1, 1))
-
-            output_list.append(slice_conv)
-
-        output = tf.squeeze(tf.stack(output_list, axis=4), axis=5)
-        output = tf.concat((x, output), axis=4)
 
         for i in range(n_blocks):
-            if upsample:
+            if(upsample):
                 weight_name = 'SB_BLOCK_UP' + str(i) + str(j)
             else:
                 weight_name = 'SB_BLOCK_DW' + str(i) + str(j)
 
-            output = tf.layers.conv3d(inputs=output,
+            conv_layer = tf.layers.conv3d(inputs=output,
                                         filters=n_filters,
                                         strides=(1, 1, 1),
-                                        kernel_size=(kernel_width, kernel_width, kernel_width),
-                                        activation=activation,
+                                        kernel_size=(1, 1, 1),
+                                        activation=tf.nn.leaky_relu,
                                         padding='SAME',
                                         name=weight_name)
+            output = conv_layer
 
-        if data_channels == n_filters:
+
+        if x.get_shape().as_list()[4] == n_filters:
             output += x
+
         return output
+
+    def differentiate_features(self, x, data_size, use_conv=True):
+        flatten_prim_idx = tf.constant(self.grid_dict['prim_points'], dtype=tf.int32)
+        n_filters = x.get_shape().as_list()[4]
+        inverse_jacobians =  tf.constant(np.reshape(self.grid_dict['inv_j'], newshape=(-1, 4, 4)), dtype= tf.float32 )
+        flat_output = tf.reshape(x, shape=(tf.shape(x)[0], -1, tf.shape(x)[4]))
+
+        prim_aligned_features = tf.gather(flat_output, flatten_prim_idx, axis=1)
+        differentiate = tf.einsum('jqk, ijqt -> ijkt', inverse_jacobians, prim_aligned_features)
+
+        primitive_features = tf.reshape(differentiate, shape=(-1, tf.shape(inverse_jacobians)[0], 4 * n_filters))
+        b = tf.reshape(primitive_features, shape=(tf.shape(primitive_features)[1], -1))
+        self.Test = differentiate
+
+
+        accumulate_features_on_points = tf.sparse_tensor_dense_matmul(self.multi_hot, b)
+        out = tf.reshape(accumulate_features_on_points, shape=(-1, data_size-2, data_size-2, data_size-2, 4*n_filters))
+
+        y = tf.pad(out, [[0, 0], [1, 1], [1, 1], [1, 1], [0, 0]])
+
+        return y
 
 class IntegratorNetwork:
 
@@ -265,7 +246,7 @@ class IntegratorNetwork:
                                                                                             tf.TensorShape([None, sdf_state_size])])
 
 
-            self.list_of_encodings = tf.slice(self.list_of_encodings, [0, 1, 0], [-1, -1, -1], name='next_encoding')
+            self.list_of_encodings = tf.slice(self.list_of_encodings, [0, 0, 0], [-1, tf.shape(self.list_of_encodings)[1] -1, -1], name='next_encoding')
 
             self.loss_int = tf.reduce_mean(tf.square(self.list_of_encodings - tf.expand_dims(self.y, axis=0)))
             self.merged_int = tf.summary.scalar('Integrator Loss', self.loss_int)
@@ -275,7 +256,7 @@ class IntegratorNetwork:
 class NetWork(layers):
 
     def __init__(self, voxel_side, param_state_size=8):
-        super(NetWork, self).__init__()
+        super(NetWork, self).__init__(tf.sparse.placeholder(tf.float32))
 
         self.param_state_size = param_state_size
         self.vx_log2 = np.log2(voxel_side)
@@ -283,6 +264,7 @@ class NetWork(layers):
 
         self.x = tf.placeholder(dtype=tf.float32, shape=(None,  voxel_side,  voxel_side,  voxel_side, 3), name='velocity')
         sdf = tf.placeholder(dtype=tf.float32, shape=(None,  voxel_side,  voxel_side,  voxel_side, 1), name='sdf')
+
 
         with tf.variable_scope('Boundary_conditions'):
             self.encoded_sdf = tf.identity(self.encoder_network_sdf(sdf, sb_blocks=1, n_filters=8, output=config.sdf_state), name='encoded_sdf')
@@ -297,12 +279,12 @@ class NetWork(layers):
             self.y = tf.identity(self.decoder_network(self.full_encoding, sdf, sb_blocks=config.sb_blocks, n_filters=config.n_filters), name='decoder')
 
         with tf.variable_scope('Differentiate'):
-            if not config.use_fem:
-                dy = self.central_difference(self.y)
-                dx = self.central_difference(self.x)
-            else:
-                dy = self.FEM_diffential(self.y)
-                dx = self.FEM_diffential(self.x)
+            #if not config.use_fem:
+            dy = self.central_difference(self.y)
+            dx = self.central_difference(self.x)
+            #else:
+            #    dy = self.FEM_diffential(self.y )
+            #    dx = self.FEM_diffential(self.x)
 
         with tf.variable_scope('Loss_Estimation'):
             self.l2_loss_v = tf.reduce_mean(tf.abs(self.y - self.x))
@@ -329,6 +311,9 @@ class NetWork(layers):
         x = self.BB(x, int(self.q), FEM=config.use_fem, sb_blocks=sb_blocks, n_filters=n_filters)
 
         x = tf.identity(tf.concat((x, sdf), axis=4), name='merge_sdf')
+        if config.use_fem:
+            x = self.differentiate_features(x, config.data_size)
+
         x = tf.layers.conv3d(x,   strides=(1, 1, 1),
                                   kernel_size=(3, 3, 3),
                                   filters=3, padding='SAME',
@@ -336,10 +321,14 @@ class NetWork(layers):
         return x
 
     def encoder_network(self, x, sb_blocks=1, n_filters=128):
+        if config.use_fem:
+            x = self.differentiate_features(x, config.data_size)
         x = tf.layers.conv3d(x, strides=(1, 1, 1),
                              kernel_size=(3, 3, 3),
                              filters=n_filters, padding='SAME',
                              name='input_convolution')
+        if config.use_fem:
+            x = self.differentiate_features(x, config.data_size)
 
         x = self.BB(x, int(self.q), FEM=config.use_fem, upsample=False, sb_blocks=sb_blocks, n_filters=n_filters)
         x = tf.contrib.layers.flatten(x)

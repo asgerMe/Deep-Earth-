@@ -13,7 +13,7 @@ def train_network():
     net = nn.NetWork(config.data_size, param_state_size=config.param_state_size)
 
     init = tf.global_variables_initializer()
-    SCF = fetch_data.get_scaling_factor(config.data_path)
+    SCF = 1#fetch_data.get_scaling_factor(config.data_path)
 
     with tf.Session() as sess:
         sess.run(init)
@@ -26,24 +26,25 @@ def train_network():
         saver = tf.train.Saver(tf.global_variables())
         store_integrator_loss_tb = 0
         store_integrator_loss = -1
-
+        index, value, shape = util.get_multihot()
+        spt = tf.SparseTensorValue(index, value, shape)
         for i in range(config.training_runs):
+
             inputs = fetch_data.get_volume(config.data_path, batch_size=config.batch_size, scaling_factor=SCF)
             inputs['Train/step:0'] = i
+            inputs[net.multi_hot] = spt
 
             if i % config.f_tensorboard == 0 and config.f_tensorboard != 0 and os.path.isdir(config.tensor_board):
                 loss, lr, _, merged = sess.run([net.loss, net.lr, net.train, net.merged], inputs)
                 writer.add_summary(merged, i)
 
             else:
-                loss, lr, _ = sess.run([net.loss, net.lr, net.train], inputs)
-
+                loss, lr, _, = sess.run([net.loss, net.lr, net.train], inputs)
 
             if config.save_freq and os.path.isdir(config.meta_graphs):
-                if config.meta_graphs and i % config.save_freq == 0 and config.save_freq != 0 and config.save_freq != 0:
+                if config.meta_graphs and i % config.save_freq == 0 and config.save_freq > 2:
                     saver.save(sess, os.path.join(config.path_e, "trained_model.ckpt"))
                     print('Saving graph')
-
 
              # Record execution stats
                 run_options = tf.RunOptions(trace_level=tf.RunOptions.FULL_TRACE)
@@ -126,8 +127,8 @@ def train_integrator():
                 print('Training Run', i, 'Learning Rate', config.lr_max, '//  Encoder Loss:', -1, '//  Integrator Loss', int_loss)
 
             if config.save_freq and os.path.isdir(config.path_i):
-                if config.meta_graphs and i % config.save_freq == 0 and config.save_freq != 0 and config.save_freq != 0:
+                if config.meta_graphs and i % config.save_freq == 0 and config.save_freq > 2:
                     saver.save(sess, os.path.join(config.path_i, "trained_integrator_model.ckpt"))
                     print('Saving graph')
 
-            util.create_gif_integrator(sess, int_net, graph, roll_out = 30, i=i, save_frequency=config.save_gif, SCF=SCF)
+            util.create_gif_integrator(sess, int_net, graph, roll_out = 2000, i=i, save_frequency=config.save_gif, SCF=SCF)

@@ -12,6 +12,40 @@ def cosine_annealing(step, max_step, lr_min, lr_max):
     return g_lr_update
 
 
+def get_multihot():
+    grid_dict = ''
+    vx = config.data_size
+
+    if config.use_fem:
+        try:
+            files = os.listdir(config.grid_dir)
+
+            print('Searching for grid in', files)
+            for file in files:
+                if file.endswith('.npz'):
+                    print('Found grid:', file)
+                    grid_dict = np.load(os.path.join(config.grid_dir, file))
+                    break
+
+        except IOError:
+            print('WARNING - NO GRID DICT FOUND AT', config.grid_dir, '... Using regular conv nets')
+            config.use_fem = False
+
+        index = []
+        values = []
+        dense_shape = [pow(config.data_size - 2, 3), np.shape(grid_dict['prim_points'])[0]]
+
+        c = 0
+
+        for i in grid_dict['point_prims']:
+            linear_index = grid_dict['linear_index'][c]
+            for j in i:
+                index.append([linear_index, j])
+                values.append(np.float32(1.0))
+            c += 1
+
+        return np.array(index, dtype=np.int64), np.array(values, dtype=np.float32), np.array(dense_shape, dtype=np.int64)
+
 
 def trilinear_interpolation_kernel():
     kernel = np.asarray(
@@ -77,7 +111,7 @@ def create_gif_integrator(sess, net, autoencoder_graph, roll_out, i = 0, gif_len
             full_encoding = autoencoder_graph.get_tensor_by_name("Latent_State/full_encoding:0")
             reconstructed_v = autoencoder_graph.get_tensor_by_name("Decoder/decoder:0")
             v_next = ''
-
+            next_encoding = 0
             for F in range(gif_length):
 
                 try:
@@ -86,10 +120,10 @@ def create_gif_integrator(sess, net, autoencoder_graph, roll_out, i = 0, gif_len
                     print('index out of range -> creating gif with stashed frames')
                     break
 
-                if F > 0:
-                    input_i['velocity:0'] = v_next
-
-                full_enc = sess.run(full_encoding, feed_dict=input_i)
+                if F == 0:
+                    full_enc = sess.run(full_encoding, feed_dict=input_i)
+                else:
+                    full_enc = next_encoding
                 try:
                     input_next = fetch_data.get_volume(search_dir, batch_size=1, time_idx=(1+F), scaling_factor=SCF)
                 except IndexError:
@@ -101,6 +135,8 @@ def create_gif_integrator(sess, net, autoencoder_graph, roll_out, i = 0, gif_len
                 integrator_feed_dict = {'parameter_encodings:0': next_encoded_sdf,  'start_encoding:0': [full_enc], "sequence_length:0": 1}
 
                 next_encoding = sess.run(net.full_encoding, feed_dict=integrator_feed_dict)
+                
+
                 v_next = sess.run(reconstructed_v,  feed_dict={'sdf:0': input_next['sdf:0'], 'Latent_State/full_encoding:0': np.squeeze(next_encoding, axis=1)})
 
                 image = np.linalg.norm(np.squeeze(v_next[0, :, 16, :, :]), axis=2)

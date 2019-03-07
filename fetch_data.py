@@ -105,24 +105,7 @@ def get_volume(data_path, batch_size=1, time_idx = -1, sequential=False, sequenc
         feed_dict_0 = {'sdf:0': [sdf[0, :, :, :, :]], 'velocity:0': [velocity[0, :, :, :, :] / scaling_factor]}
         return feed_dict, feed_dict_0
 
-def get_grid_diffs(file_name, data_path=config.data_path):
 
-    full_path = os.path.join(data_path, file_name)
-
-    try:
-        data = np.load(full_path, mmap_mode='r+')
-        voxels = np.shape(data)[2]
-        if np.log2(voxels) != np.ceil(np.log2(voxels)):
-            new_voxels = pow(2, np.ceil(np.log2(voxels)))
-            padding = int(new_voxels - voxels)
-            data = np.pad(data, ((0, 0), (0, 0), (padding, 0), (padding, 0), (padding, 0)), mode='constant')
-            data = np.moveaxis(data, 1, 4)
-
-        return data
-
-    except FileNotFoundError:
-        print('No grid found')
-        return 0
 
 
 
