@@ -27,14 +27,13 @@ def get_volume(data_path, batch_size=1, time_idx = -1, sequential=False, sequenc
     list_files = os.listdir(data_path)
     batch = []
 
-
     if not sequential:
         for i in range(batch_size):
 
             full_path=''
             try:
                 if time_idx == -1:
-                    random_file_name = list_files[np.random.randint(0, (np.size(list_files)-1) )]
+                    random_file_name = list_files[np.random.randint(0, np.size(list_files))]
                 else:
                     random_file_name = list_files[0]
                 full_path = os.path.join(data_path, random_file_name)
@@ -60,7 +59,7 @@ def get_volume(data_path, batch_size=1, time_idx = -1, sequential=False, sequenc
     if sequential:
         for i in range(batch_size):
             try:
-                random_file_name = list_files[np.random.randint(0, np.size(list_files)-1)]
+                random_file_name = list_files[np.random.randint(0, np.size(list_files))]
                 full_path = os.path.join(data_path, random_file_name)
             except ValueError:
                 print('no suitable files in path, at least two files needed !')

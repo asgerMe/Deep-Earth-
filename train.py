@@ -13,7 +13,7 @@ def train_network():
     net = nn.NetWork(config.data_size, param_state_size=config.param_state_size)
 
     init = tf.global_variables_initializer()
-    SCF = 1#fetch_data.get_scaling_factor(config.data_path)
+    SCF = fetch_data.get_scaling_factor(config.data_path)
 
     with tf.Session() as sess:
         sess.run(init)
@@ -26,20 +26,17 @@ def train_network():
         saver = tf.train.Saver(tf.global_variables())
         store_integrator_loss_tb = 0
         store_integrator_loss = -1
-        index, value, shape = util.get_multihot()
-        spt = tf.SparseTensorValue(index, value, shape)
+
         for i in range(config.training_runs):
 
             inputs = fetch_data.get_volume(config.data_path, batch_size=config.batch_size, scaling_factor=SCF)
             inputs['Train/step:0'] = i
-            inputs[net.multi_hot] = spt
 
             if i % config.f_tensorboard == 0 and config.f_tensorboard != 0 and os.path.isdir(config.tensor_board):
                 loss, lr, _, merged = sess.run([net.loss, net.lr, net.train, net.merged], inputs)
                 writer.add_summary(merged, i)
-
             else:
-                loss, lr, _, = sess.run([net.loss, net.lr, net.train], inputs)
+                loss, lr, _ = sess.run([net.loss, net.lr, net.train], inputs)
 
             if config.save_freq and os.path.isdir(config.meta_graphs):
                 if config.meta_graphs and i % config.save_freq == 0 and config.save_freq > 2:

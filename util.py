@@ -14,8 +14,10 @@ def cosine_annealing(step, max_step, lr_min, lr_max):
 
 def get_multihot():
     grid_dict = ''
-    vx = config.data_size
 
+    index = 0
+    values = 0
+    dense_shape = 0
     if config.use_fem:
         try:
             files = os.listdir(config.grid_dir)
@@ -39,13 +41,21 @@ def get_multihot():
 
         for i in grid_dict['point_prims']:
             linear_index = grid_dict['linear_index'][c]
+            pt_volume = grid_dict['point_volume'][c]
             for j in i:
                 index.append([linear_index, j])
-                values.append(np.float32(1.0))
+                values.append(np.float32(1.0/pt_volume))
             c += 1
 
-        return np.array(index, dtype=np.int64), np.array(values, dtype=np.float32), np.array(dense_shape, dtype=np.int64)
+    return np.array(index, dtype=np.int64), np.array(values, dtype=np.float32), np.array(dense_shape, dtype=np.int64), grid_dict
 
+def differential_kernel():
+        kernel = np.asarray([[[0, 1, 0], [1, 1, 1], [0, 1, 0]], [[1, 1, 1], [1, 1, 1], [1, 1, 1]], [[0, 1, 0], [1, 1, 1], [0, 1, 0]]])
+        kernel = np.expand_dims(kernel, axis=3)
+        kernel = np.expand_dims(kernel, axis=4)
+        kernel = tf.constant(kernel, dtype=tf.float32)
+
+        return kernel
 
 def trilinear_interpolation_kernel():
     kernel = np.asarray(

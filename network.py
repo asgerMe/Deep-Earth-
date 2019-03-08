@@ -7,35 +7,12 @@ import os
 
 class layers:
 
-    def __init__(self, multi_hot):
-        self.grid_dict = ''
+    def __init__(self):
 
-        if config.use_fem:
-            try:
-                files = os.listdir(config.grid_dir)
-                print('Searching for grid in', files)
-                for file in files:
-                    if file.endswith('.npz'):
-                        print('Found grid:', file)
-                        self.grid_dict = np.load(os.path.join(config.grid_dir, file))
-
-                        break
-
-            except IOError:
-                print('WARNING - NO GRID DICT FOUND AT', config.grid_dir, '... Using regular conv nets')
-                config.use_fem = False
-
-            self.multi_hot = multi_hot
-
-
-
-    def differential_kernel(self):
-        kernel = np.asarray([[[0, 1, 0], [1, 1, 1], [0, 1, 0]], [[1, 1, 1], [1, 1, 1], [1, 1, 1]], [[0, 1, 0], [1, 1, 1], [0, 1, 0]]])
-        kernel = np.expand_dims(kernel, axis=3)
-        kernel = np.expand_dims(kernel, axis=4)
-        kernel = tf.constant(kernel, dtype=tf.float32)
-
-        return kernel
+        index, value, shape, grid = util.get_multihot()
+        self.multi_hot = tf.SparseTensorValue(index, value, shape)
+        self.grid_dict = grid
+        self.Test = 100
 
     def SB(self, x, j, n_filters=16, n_blocks=1, upsample=True):
         output = x
@@ -49,7 +26,7 @@ class layers:
             conv_layer = tf.layers.conv3d(inputs=output,
                                         filters=n_filters,
                                         strides=(1, 1, 1),
-                                        kernel_size=(3, 3, 3),
+                                        kernel_size=(1, 1, 1),
                                         activation=tf.nn.leaky_relu,
                                         padding='SAME',
                                         name=weight_name)
@@ -111,7 +88,7 @@ class layers:
         x = tf.reshape(x, [-1, xdim, ydim, zdim])
         x = tf.expand_dims(x, axis=4)
 
-        x = tf.nn.conv3d(x, strides=(1, 2, 2, 2, 1), filter=self.trilinear_interpolation_kernel(), padding='SAME', name='downsample')
+        x = tf.nn.conv3d(x, strides=(1, 2, 2, 2, 1), filter=util.trilinear_interpolation_kernel(), padding='SAME', name='downsample')
         x = tf.reshape(x, [-1, int(xdim/2), int(ydim/2), int(zdim/2), int(wdim)])
         return x
 
@@ -137,7 +114,6 @@ class layers:
         return tf.reshape(dh, [-1, int(d), int(h), int(w), int(c)])
 
 
-
     def central_difference(self, x):
         x_stack = tf.unstack(x, axis=4)
         dx_kernel = tf.transpose(tf.constant([[[[[1.0, 0.0, -1.0]]]]]), perm=[4, 1, 2, 3, 0])
@@ -159,51 +135,28 @@ class layers:
         return tf.squeeze(tf.stack(d_stack, axis=4), axis=5)
 
 
-
-    def geometric_SB(self, x, j, n_filters=16, n_blocks=1, upsample=True):
-        output = x
-
-        for i in range(n_blocks):
-            if(upsample):
-                weight_name = 'SB_BLOCK_UP' + str(i) + str(j)
-            else:
-                weight_name = 'SB_BLOCK_DW' + str(i) + str(j)
-
-            conv_layer = tf.layers.conv3d(inputs=output,
-                                        filters=n_filters,
-                                        strides=(1, 1, 1),
-                                        kernel_size=(1, 1, 1),
-                                        activation=tf.nn.leaky_relu,
-                                        padding='SAME',
-                                        name=weight_name)
-            output = conv_layer
-
-
-        if x.get_shape().as_list()[4] == n_filters:
-            output += x
-
-        return output
-
-    def differentiate_features(self, x, data_size, use_conv=True):
+    def differentiate_features(self, x, loss = False):
+        data_size = x.get_shape().as_list()[1]
         flatten_prim_idx = tf.constant(self.grid_dict['prim_points'], dtype=tf.int32)
         n_filters = x.get_shape().as_list()[4]
         inverse_jacobians =  tf.constant(np.reshape(self.grid_dict['inv_j'], newshape=(-1, 4, 4)), dtype= tf.float32 )
         flat_output = tf.reshape(x, shape=(tf.shape(x)[0], -1, tf.shape(x)[4]))
 
         prim_aligned_features = tf.gather(flat_output, flatten_prim_idx, axis=1)
+
         differentiate = tf.einsum('jqk, ijqt -> ijkt', inverse_jacobians, prim_aligned_features)
 
         primitive_features = tf.reshape(differentiate, shape=(-1, tf.shape(inverse_jacobians)[0], 4 * n_filters))
         b = tf.reshape(primitive_features, shape=(tf.shape(primitive_features)[1], -1))
-        self.Test = differentiate
-
 
         accumulate_features_on_points = tf.sparse_tensor_dense_matmul(self.multi_hot, b)
         out = tf.reshape(accumulate_features_on_points, shape=(-1, data_size-2, data_size-2, data_size-2, 4*n_filters))
 
-        y = tf.pad(out, [[0, 0], [1, 1], [1, 1], [1, 1], [0, 0]])
+        out = tf.pad(out, [[0, 0], [1, 1], [1, 1], [1, 1], [0, 0]])
 
-        return y
+        out = tf.concat((x, out), axis=4)
+        out = tf.nn.relu(out)
+        return out
 
 class IntegratorNetwork:
 
@@ -256,7 +209,7 @@ class IntegratorNetwork:
 class NetWork(layers):
 
     def __init__(self, voxel_side, param_state_size=8):
-        super(NetWork, self).__init__(tf.sparse.placeholder(tf.float32))
+        super(NetWork, self).__init__()
 
         self.param_state_size = param_state_size
         self.vx_log2 = np.log2(voxel_side)
@@ -264,7 +217,6 @@ class NetWork(layers):
 
         self.x = tf.placeholder(dtype=tf.float32, shape=(None,  voxel_side,  voxel_side,  voxel_side, 3), name='velocity')
         sdf = tf.placeholder(dtype=tf.float32, shape=(None,  voxel_side,  voxel_side,  voxel_side, 1), name='sdf')
-
 
         with tf.variable_scope('Boundary_conditions'):
             self.encoded_sdf = tf.identity(self.encoder_network_sdf(sdf, sb_blocks=1, n_filters=8, output=config.sdf_state), name='encoded_sdf')
@@ -278,19 +230,18 @@ class NetWork(layers):
         with tf.variable_scope('Decoder'):
             self.y = tf.identity(self.decoder_network(self.full_encoding, sdf, sb_blocks=config.sb_blocks, n_filters=config.n_filters), name='decoder')
 
-        with tf.variable_scope('Differentiate'):
-            #if not config.use_fem:
-            dy = self.central_difference(self.y)
-            dx = self.central_difference(self.x)
-            #else:
-            #    dy = self.FEM_diffential(self.y )
-            #    dx = self.FEM_diffential(self.x)
+        #if not config.use_fem:
+        dy = self.central_difference(self.y)
+        dx = self.central_difference(self.x)
+        #else:
+        #    dy = self.differentiate_features(self.y, loss=True)
+        #    dx = self.differentiate_features(self.x, loss=True)
 
         with tf.variable_scope('Loss_Estimation'):
             self.l2_loss_v = tf.reduce_mean(tf.abs(self.y - self.x))
             self.l2_loss_dv = tf.reduce_mean(tf.abs(dy - dx))
 
-            self.loss = self.l2_loss_v + self.l2_loss_dv
+            self.loss = self.l2_loss_dv + self.l2_loss_v
 
         with tf.variable_scope('Train'):
             self.step = tf.placeholder(dtype=tf.int32, name='step')
@@ -311,24 +262,22 @@ class NetWork(layers):
         x = self.BB(x, int(self.q), FEM=config.use_fem, sb_blocks=sb_blocks, n_filters=n_filters)
 
         x = tf.identity(tf.concat((x, sdf), axis=4), name='merge_sdf')
-        if config.use_fem:
-            x = self.differentiate_features(x, config.data_size)
 
+
+        x = self.differentiate_features(x)
         x = tf.layers.conv3d(x,   strides=(1, 1, 1),
-                                  kernel_size=(3, 3, 3),
+                                  kernel_size=(1, 1, 1),
                                   filters=3, padding='SAME',
                                   name='output_convolution')
         return x
 
     def encoder_network(self, x, sb_blocks=1, n_filters=128):
-        if config.use_fem:
-            x = self.differentiate_features(x, config.data_size)
+        x = self.differentiate_features(x)
         x = tf.layers.conv3d(x, strides=(1, 1, 1),
-                             kernel_size=(3, 3, 3),
+                             kernel_size=(1, 1, 1),
                              filters=n_filters, padding='SAME',
                              name='input_convolution')
-        if config.use_fem:
-            x = self.differentiate_features(x, config.data_size)
+        x = self.differentiate_features(x)
 
         x = self.BB(x, int(self.q), FEM=config.use_fem, upsample=False, sb_blocks=sb_blocks, n_filters=n_filters)
         x = tf.contrib.layers.flatten(x)
@@ -339,7 +288,7 @@ class NetWork(layers):
 
     def encoder_network_sdf(self, x, sb_blocks=1, n_filters=8, output=8):
         x = tf.layers.conv3d(x, strides=(1, 1, 1),
-                             kernel_size=(3, 3, 3),
+                             kernel_size=(1, 1, 1),
                              filters=n_filters, padding='SAME',
                              name='input_convolution')
 
