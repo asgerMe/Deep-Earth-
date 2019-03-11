@@ -134,51 +134,55 @@ class layers:
 
         return tf.squeeze(tf.stack(d_stack, axis=4), axis=5)
 
+    def fem_differentiate(self, x):
+        data_size = x.get_shape().as_list()[1]
+        flatten_prim_idx = tf.constant(self.grid_dict['prim_points'], dtype=tf.int64)
+        n_filters = x.get_shape().as_list()[4]
+        inverse_jacobians = tf.constant(np.reshape(self.grid_dict['inv_j'], newshape=(-1, 4, 4)), dtype=tf.float32)
+
+        flat_output = tf.reshape(x, shape=(tf.shape(x)[0], -1, tf.shape(x)[4]))
+
+        prim_aligned_features = tf.gather(flat_output, flatten_prim_idx, axis=1)
+
+        differentiate = tf.einsum('jqk, ijqt -> ijkt', inverse_jacobians, prim_aligned_features)
+
+        primitive_features = tf.reshape(differentiate, shape=(-1, tf.shape(inverse_jacobians)[0], 4 * n_filters))
+        b = tf.reshape(primitive_features, shape=(tf.shape(primitive_features)[1], -1))
+
+        accumulate_features_on_points = tf.sparse_tensor_dense_matmul(self.multi_hot, b)
+
+        out = tf.reshape(accumulate_features_on_points, shape=(-1, data_size, data_size, data_size, 4 * n_filters))
+        return out
 
     def differentiate_features(self, x, n_filters = 128, name=''):
 
         with tf.variable_scope('Differentiate_Features' + name):
-            data_size = x.get_shape().as_list()[1]
 
-            x_s = tf.layers.conv3d(x, strides=(1, 1, 1),
-                                 kernel_size=(1, 1, 1),
-                                 filters=n_filters/2, padding='SAME',
-                                 name='diff_convolution_x_s',
-                                 activation=tf.nn.leaky_relu)
+            if n_filters != 0:
 
+                x_s = tf.layers.conv3d(x, strides=(1, 1, 1),
+                                     kernel_size=(1, 1, 1),
+                                     filters=n_filters/2, padding='SAME',
+                                     name='diff_convolution_x_s',
+                                     activation=tf.nn.leaky_relu)
 
-            x = tf.layers.conv3d(x, strides=(1, 1, 1),
-                                 kernel_size=(1, 1, 1),
-                                 filters=n_filters/2, padding='SAME',
-                                 name='diff_convolution_in',
-                                 activation=tf.nn.leaky_relu)
+                x = tf.layers.conv3d(x, strides=(1, 1, 1),
+                                     kernel_size=(1, 1, 1),
+                                     filters=n_filters/2, padding='SAME',
+                                     name='diff_convolution_in',
+                                     activation=tf.nn.leaky_relu)
 
+            out = self.fem_differentiate(x)
 
-            flatten_prim_idx = tf.constant(self.grid_dict['prim_points'], dtype=tf.int64)
-            n_filters = x.get_shape().as_list()[4]
-            inverse_jacobians =  tf.constant(np.reshape(self.grid_dict['inv_j'], newshape=(-1, 4, 4)), dtype= tf.float32 )
+            if n_filters != 0:
+                out = tf.layers.conv3d(out, strides=(1, 1, 1),
+                                     kernel_size=(1, 1, 1),
+                                     filters=n_filters, padding='SAME',
+                                     name='diff_convolution_out',
+                                     activation = tf.nn.leaky_relu)
 
-            flat_output = tf.reshape(x, shape=(tf.shape(x)[0], -1, tf.shape(x)[4]))
-
-            prim_aligned_features = tf.gather(flat_output, flatten_prim_idx, axis=1)
-
-            differentiate = tf.einsum('jqk, ijqt -> ijkt', inverse_jacobians, prim_aligned_features)
-
-            primitive_features = tf.reshape(differentiate, shape=(-1, tf.shape(inverse_jacobians)[0], 4 * n_filters))
-            b = tf.reshape(primitive_features, shape=(tf.shape(primitive_features)[1], -1))
-
-            accumulate_features_on_points = tf.sparse_tensor_dense_matmul(self.multi_hot, b)
-
-            out = tf.reshape(accumulate_features_on_points, shape=(-1, data_size, data_size, data_size, 4*n_filters))
-            self.Test = out
-            out = tf.layers.conv3d(out, strides=(1, 1, 1),
-                                 kernel_size=(1, 1, 1),
-                                 filters=n_filters, padding='SAME',
-                                 name='diff_convolution_out',
-                                 activation = tf.nn.leaky_relu)
-
-            out = x_s + out
-            out = tf.nn.leaky_relu(out)
+                out = x_s + out
+                out = tf.nn.leaky_relu(out)
 
             return out
 
@@ -258,9 +262,13 @@ class NetWork(layers):
         with tf.variable_scope('Decoder'):
             self.y = tf.identity(self.decoder_network(self.full_encoding, sdf, sb_blocks=config.sb_blocks, n_filters=config.n_filters), name='decoder')
 
-        with tf.variable_scope('Finite_Difference'):
-            dy = self.central_difference(self.y)
-            d_labels = self.central_difference(self.labels)
+        with tf.variable_scope('Differentiate'):
+            if not config.fem_loss:
+                dy = self.central_difference(self.y)
+                d_labels = self.central_difference(self.labels)
+            else:
+                dy = self.fem_differentiate(self.labels)
+                d_labels = self.fem_differentiate(self.y)
 
         with tf.variable_scope('Loss_Estimation'):
             self.l2_loss_v = tf.reduce_mean(tf.abs(self.y - self.labels))
@@ -289,7 +297,10 @@ class NetWork(layers):
         x = self.BB(x, int(self.q), FEM=config.use_fem, sb_blocks=sb_blocks, n_filters=n_filters)
 
         x = tf.identity(tf.concat((x, sdf), axis=4), name='merge_sdf')
-        x = self.differentiate_features(x, n_filters=n_filters, name='2')
+
+        if config.use_fem:
+            x = self.differentiate_features(x, n_filters=n_filters, name='2')
+
         x = tf.layers.conv3d(x,   strides=(1, 1, 1),
                                   kernel_size=(3, 3, 3),
                                   filters=3, padding='SAME',
@@ -297,7 +308,9 @@ class NetWork(layers):
         return x
 
     def encoder_network(self, x, sb_blocks=1, n_filters=128):
-        x = self.differentiate_features(x, n_filters=n_filters, name= '1')
+
+        if config.use_fem:
+            x = self.differentiate_features(x, n_filters=n_filters, name= '1')
 
         x = self.BB(x, int(self.q), FEM=config.use_fem, upsample=False, sb_blocks=sb_blocks, n_filters=n_filters)
 

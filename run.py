@@ -28,7 +28,9 @@ parser.add_argument('-mlp', '--encoder_mlp_layers', default = 1, type = int,  he
 parser.add_argument('-sdf', '--sdf_state_size', default = 2, type = int,  help="size of the boundary conditions encoding")
 parser.add_argument('-gif', '--gif_saver_f', default = 5000, type = int,  help="Frequency for saving gifs")
 parser.add_argument('-b', '--batch_size', default = 1, type=int, help='Batch size for training')
-parser.add_argument('-fem', '--use_geo_kernels', action='store_true', help="use tri-linear interpolation for resampling and not nearest neighbour")
+parser.add_argument('-fem', '--use_differential_kernels', action='store_true', help="use fem layers")
+
+parser.add_argument('-fem_loss', '--fem_difference', action='store_true', help="use the fem differentials as loss metric")
 
 parser.add_argument('-g', '--grid_path', help='Path to grid dictionary')
 args = parser.parse_args()
@@ -52,6 +54,7 @@ config.sdf_state = args.sdf_state_size
 config.save_gif = args.gif_saver_f
 config.grid_dir = args.grid_path
 config.use_fem = args.use_geo_kernels
+config.fem_loss = args.fem_difference
 
 
 if not os.path.isdir(config.output_dir):

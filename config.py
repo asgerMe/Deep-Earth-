@@ -37,3 +37,5 @@ integrator_name = 'integrator'
 batch_size = 5
 
 convolutional = False
+
+fem_loss = False
