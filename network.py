@@ -158,31 +158,28 @@ class layers:
 
         with tf.variable_scope('Differentiate_Features' + name):
 
-            if n_filters != 0:
+            x_s = tf.layers.conv3d(x, strides=(1, 1, 1),
+                                kernel_size=(1, 1, 1),
+                                filters=n_filters, padding='SAME',
+                                name='diff_convolution_x_s',
+                                activation=tf.nn.leaky_relu)
 
-                x_s = tf.layers.conv3d(x, strides=(1, 1, 1),
-                                     kernel_size=(1, 1, 1),
-                                     filters=n_filters/2, padding='SAME',
-                                     name='diff_convolution_x_s',
-                                     activation=tf.nn.leaky_relu)
-
-                x = tf.layers.conv3d(x, strides=(1, 1, 1),
-                                     kernel_size=(1, 1, 1),
-                                     filters=n_filters/2, padding='SAME',
-                                     name='diff_convolution_in',
-                                     activation=tf.nn.leaky_relu)
+            x = tf.layers.conv3d(x, strides=(1, 1, 1),
+                                kernel_size=(1, 1, 1),
+                                filters=n_filters, padding='SAME',
+                                name='diff_convolution_in',
+                                activation=tf.nn.leaky_relu)
 
             out = self.fem_differentiate(x)
 
-            if n_filters != 0:
-                out = tf.layers.conv3d(out, strides=(1, 1, 1),
-                                     kernel_size=(1, 1, 1),
-                                     filters=n_filters, padding='SAME',
-                                     name='diff_convolution_out',
-                                     activation = tf.nn.leaky_relu)
+            out = tf.layers.conv3d(out, strides=(1, 1, 1),
+                                kernel_size=(1, 1, 1),
+                                filters=n_filters, padding='SAME',
+                                name='diff_convolution_out',
+                                activation = tf.nn.leaky_relu)
 
-                out = x_s + out
-                out = tf.nn.leaky_relu(out)
+            out = x_s + out
+            out = tf.nn.leaky_relu(out)
 
             return out
 

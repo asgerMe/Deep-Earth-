@@ -53,7 +53,7 @@ config.encoder_mlp_layers = args.encoder_mlp_layers
 config.sdf_state = args.sdf_state_size
 config.save_gif = args.gif_saver_f
 config.grid_dir = args.grid_path
-config.use_fem = args.use_geo_kernels
+config.use_fem = args.use_differential_kernels
 config.fem_loss = args.fem_difference
 
 

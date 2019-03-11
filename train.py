@@ -38,7 +38,7 @@ def train_network():
                 loss, lr, merged, _ = sess.run([net.loss, net.lr, net.merged, net.train], inputs)
                 writer.add_summary(merged, i)
             else:
-                loss, lr, test, _ = sess.run([net.loss, net.lr, net.Test, net.train], inputs)
+                loss, lr, _ = sess.run([net.loss, net.lr, net.train], inputs)
 
 
             if config.save_freq and os.path.isdir(config.meta_graphs):
