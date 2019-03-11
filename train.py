@@ -13,14 +13,16 @@ def train_network():
     net = nn.NetWork(config.data_size, param_state_size=config.param_state_size)
 
     init = tf.global_variables_initializer()
-    SCF = fetch_data.get_scaling_factor(config.data_path)
+    SCF = 1#fetch_data.get_scaling_factor(config.data_path)
 
     with tf.Session() as sess:
         sess.run(init)
 
         sub_dir = os.path.join(config.tensor_board, time.strftime("%Y%m%d-%H%M%S"))
+        sub_dir_test = os.path.join(config.tensor_board, 'test'+time.strftime("%Y%m%d-%H%M%S"))
         os.mkdir(sub_dir)
         writer = tf.summary.FileWriter(sub_dir)
+        writer_test = tf.summary.FileWriter(sub_dir_test)
         writer.add_graph(sess.graph)
 
         saver = tf.train.Saver(tf.global_variables())
@@ -33,17 +35,26 @@ def train_network():
             inputs['Train/step:0'] = i
 
             if i % config.f_tensorboard == 0 and config.f_tensorboard != 0 and os.path.isdir(config.tensor_board):
-                loss, lr, _, merged = sess.run([net.loss, net.lr, net.train, net.merged], inputs)
+                loss, lr, merged, _ = sess.run([net.loss, net.lr, net.merged, net.train], inputs)
                 writer.add_summary(merged, i)
             else:
-                loss, lr, _ = sess.run([net.loss, net.lr, net.train], inputs)
+                loss, lr, test, _ = sess.run([net.loss, net.lr, net.Test, net.train], inputs)
+
 
             if config.save_freq and os.path.isdir(config.meta_graphs):
                 if config.meta_graphs and i % config.save_freq == 0 and config.save_freq > 2:
                     saver.save(sess, os.path.join(config.path_e, "trained_model.ckpt"))
                     print('Saving graph')
 
-             # Record execution stats
+            if i % 500 == 0 and i != 0 and os.path.isdir(config.tensor_board):
+                inputs['velocity:0'] *= 0
+                loss, merged = sess.run([net.loss, net.merged], inputs)
+                writer_test.add_summary(merged, i)
+                train_field = sess.run(net.y, inputs)
+                np.save(os.path.join(config.output_dir, 'train_field' + time.strftime("%Y%m%d-%H%M%S")), train_field)
+
+
+                # Record execution stats
                 run_options = tf.RunOptions(trace_level=tf.RunOptions.FULL_TRACE)
                 run_metadata = tf.RunMetadata()
                 _ = sess.run([net.train],
@@ -69,7 +80,7 @@ def train_integrator():
 
     init = tf.global_variables_initializer()
 
-    SCF = fetch_data.get_scaling_factor(config.data_path)
+    SCF = 1#fetch_data.get_scaling_factor(config.data_path)
 
     for file in os.listdir(config.path_e):
         print(file)

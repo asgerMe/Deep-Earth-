@@ -26,7 +26,7 @@ def get_volume(data_path, batch_size=1, time_idx = -1, sequential=False, sequenc
 
     list_files = os.listdir(data_path)
     batch = []
-
+    random_file_name = ''
     if not sequential:
         for i in range(batch_size):
 
@@ -97,11 +97,11 @@ def get_volume(data_path, batch_size=1, time_idx = -1, sequential=False, sequenc
     sdf = np.expand_dims(batch[:, 0, :, :, :], 4)
     velocity = np.moveaxis(batch[:, 1:4, :, :, :], 1, 4)
 
-    feed_dict = {'sdf:0': sdf, 'velocity:0': velocity / scaling_factor}
+    feed_dict = {'sdf:0': sdf, 'labels:0': velocity / scaling_factor, 'velocity:0': velocity / scaling_factor}
     if not sequential:
         return feed_dict
     else:
-        feed_dict_0 = {'sdf:0': [sdf[0, :, :, :, :]], 'velocity:0': [velocity[0, :, :, :, :] / scaling_factor]}
+        feed_dict_0 = {'sdf:0': [sdf[0, :, :, :, :]], 'labels:0': [velocity[0, :, :, :, :] / scaling_factor], 'velocity:0': [velocity[0, :, :, :, :] / scaling_factor]}
         return feed_dict, feed_dict_0
 
 

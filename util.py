@@ -35,7 +35,7 @@ def get_multihot():
 
         index = []
         values = []
-        dense_shape = [pow(config.data_size - 2, 3), np.shape(grid_dict['prim_points'])[0]]
+        dense_shape = [np.int64(pow(config.data_size, 3)), np.shape(grid_dict['prim_points'])[0]]
 
         c = 0
 

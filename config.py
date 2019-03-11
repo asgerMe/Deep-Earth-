@@ -35,3 +35,5 @@ meta_graphs = ''
 encoder_name = 'encoder'
 integrator_name = 'integrator'
 batch_size = 5
+
+convolutional = False
