@@ -41,18 +41,18 @@ def train_network():
                 loss, lr, _ = sess.run([net.loss, net.lr, net.train], inputs)
 
 
-            if config.save_freq and os.path.isdir(config.meta_graphs):
-                if config.meta_graphs and i % config.save_freq == 0 and config.save_freq > 2:
-                    saver.save(sess, os.path.join(config.path_e, "trained_model.ckpt"))
-                    print('Saving graph')
+            if os.path.isdir(config.path_e) and i % config.save_freq == 0:
+                saver.save(sess, os.path.join(config.path_e, time.strftime("%Y%m%d-%H%M%S") + "_trained_model.ckpt"))
+                print('Saving graph')
 
-            if i % 500 == 0 and i != 0 and os.path.isdir(config.tensor_board):
-                inputs['velocity:0'] *= 0
-                loss, merged = sess.run([net.loss, net.merged], inputs)
+            if i % 500 == 0 and os.path.isdir(config.tensor_board):
+                inputs_ci = fetch_data.get_volume('D:\output\circular_ice', 1, scaling_factor=SCF)
+                inputs_ci['Train/step:0'] = i
+
+                loss, merged = sess.run([net.loss, net.merged], inputs_ci)
                 writer_test.add_summary(merged, i)
-                train_field = sess.run(net.y, inputs)
-                np.save(os.path.join(config.output_dir, 'train_field' + time.strftime("%Y%m%d-%H%M%S")), train_field)
-
+                test_field = sess.run(net.y, inputs_ci)
+                np.save(os.path.join(config.test_field_path, 'train_field' + time.strftime("%Y%m%d-%H%M%S")), test_field)
 
                 # Record execution stats
                 run_options = tf.RunOptions(trace_level=tf.RunOptions.FULL_TRACE)
@@ -66,7 +66,7 @@ def train_network():
             if not i % 10:
                 print('Training Run', i, 'Learning Rate', lr,'//  Encoder Loss:', loss, '//  Integrator Loss', store_integrator_loss)
 
-            util.create_gif_encoder(sess, net, i=i, save_frequency=config.save_gif, SCF=SCF)
+            util.create_gif_encoder("D:/output/circular_ice/", sess, net, i=i, save_frequency=config.save_gif, SCF=SCF)
 
 
 def train_integrator():
@@ -76,7 +76,10 @@ def train_integrator():
     int_net = 0
 
     if config.train_integrator_network:
-        int_net = nn.IntegratorNetwork(param_state_size=config.param_state_size, sdf_state_size=config.sdf_state)
+        if not config.conv:
+            int_net = nn.IntegratorNetwork(param_state_size=config.param_state_size, sdf_state_size=config.sdf_state)
+        else:
+            int_net = nn.Convo_IntegratorNetwork(config.data_size,param_state_size= config.param_state_size, sdf_state_size=config.sdf_state)
 
     init = tf.global_variables_initializer()
 

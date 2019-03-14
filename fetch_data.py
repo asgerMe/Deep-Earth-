@@ -1,6 +1,7 @@
 import numpy as np
 import os
 import config
+import glob
 
 def get_scaling_factor(data_path):
     list_files = os.listdir(data_path)
@@ -24,37 +25,40 @@ def get_scaling_factor(data_path):
 
 def get_volume(data_path, batch_size=1, time_idx = -1, sequential=False, sequence_length=1, inference=False, scaling_factor=1):
 
-    list_files = os.listdir(data_path)
+    os.chdir(data_path)
+    list_files = glob.glob('*.npy')
+
     batch = []
     random_file_name = ''
     if not sequential:
         for i in range(batch_size):
+            for attempts in range(1000):
+                full_path=''
+                try:
+                    if time_idx == -1:
+                        random_file_name = list_files[np.random.randint(0, np.size(list_files))]
+                    else:
+                        random_file_name = list_files[0]
 
-            full_path=''
-            try:
-                if time_idx == -1:
-                    random_file_name = list_files[np.random.randint(0, np.size(list_files))]
-                else:
-                    random_file_name = list_files[0]
-                full_path = os.path.join(data_path, random_file_name)
+                    full_path = os.path.join(data_path, random_file_name)
 
-            except ValueError:
-                print('no suitable files in path')
-                exit()
+                except ValueError:
+                    print('no .npy files in path')
+                    exit()
 
-            try:
-                data = np.load(full_path, mmap_mode='r')
-                dim1 = np.shape(data)[0]
+                try:
+                    data = np.load(full_path, mmap_mode='r')
+                    dim1 = np.shape(data)[0]
 
-                if time_idx == -1:
-                    time_idx = np.random.randint(0, dim1)
+                    if time_idx == -1:
+                        time_idx = np.random.randint(0, dim1)
 
-                data_slice = data[time_idx, :, :]
-                batch.append(data_slice)
+                    data_slice = data[time_idx, :, :]
+                    batch.append(data_slice)
+                    break
 
-            except IndexError:
-                print('could not open file')
-                continue
+                except:
+                    continue
 
     if sequential:
         for i in range(batch_size):
@@ -82,7 +86,6 @@ def get_volume(data_path, batch_size=1, time_idx = -1, sequential=False, sequenc
                 batch = np.concatenate([batch, padding], axis=0)
 
             except IndexError:
-                print('could not open file')
                 continue
 
 

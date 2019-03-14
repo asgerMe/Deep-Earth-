@@ -9,9 +9,11 @@ class layers:
 
     def __init__(self):
 
-        index, value, shape, grid = util.get_multihot()
-        self.multi_hot = tf.SparseTensorValue(index, value, shape)
-        self.grid_dict = grid
+        if config.fem_loss or config.use_fem:
+            index, value, shape, grid = util.get_multihot()
+            self.multi_hot = tf.SparseTensorValue(index, value, shape)
+            self.grid_dict = grid
+
         self.Test = 100
 
     def SB(self, x, j, n_filters=16, n_blocks=1, upsample=True):
@@ -152,6 +154,7 @@ class layers:
         accumulate_features_on_points = tf.sparse_tensor_dense_matmul(self.multi_hot, b)
 
         out = tf.reshape(accumulate_features_on_points, shape=(-1, data_size, data_size, data_size, 4 * n_filters))
+        out = tf.concat((out, x), axis=4)
         return out
 
     def differentiate_features(self, x, n_filters = 128, name=''):
@@ -164,13 +167,13 @@ class layers:
                                 name='diff_convolution_x_s',
                                 activation=tf.nn.leaky_relu)
 
-            x = tf.layers.conv3d(x, strides=(1, 1, 1),
+            out = tf.layers.conv3d(x, strides=(1, 1, 1),
                                 kernel_size=(1, 1, 1),
                                 filters=n_filters, padding='SAME',
                                 name='diff_convolution_in',
                                 activation=tf.nn.leaky_relu)
-
-            out = self.fem_differentiate(x)
+            if config.use_fem:
+                out = self.fem_differentiate(out)
 
             out = tf.layers.conv3d(out, strides=(1, 1, 1),
                                 kernel_size=(1, 1, 1),
@@ -201,7 +204,8 @@ class IntegratorNetwork:
                 f2 = tf.nn.dropout(tf.layers.dense(f1, 512, activation=tf.nn.elu, name='layer_2'), keep_prob=0.9)
                 T = tf.layers.dense(f2, param_state_size, activation=tf.nn.elu, name='next_encoding')
 
-                encoding = tf.slice(encoding,[0, 0, 0], [-1, -1, param_state_size])
+
+                encoding = tf.slice(encoding, [0, 0, 0], [-1, -1, param_state_size])
                 sliced_parm_encoding = tf.slice(parm_encodings, [tf.cast(idx, dtype=tf.int32), 0], [1, -1])
 
                 sliced_parm_encoding = tf.expand_dims(sliced_parm_encoding, axis=0)
@@ -230,6 +234,77 @@ class IntegratorNetwork:
             self.merged_int = tf.summary.scalar('Integrator Loss', self.loss_int)
             self.train_int = tf.train.AdamOptimizer(learning_rate=config.lr_max).minimize(self.loss_int)
 
+class Convo_IntegratorNetwork:
+
+    def __init__(self, voxel_side, param_state_size=8, sdf_state_size=8):
+
+        self.y = tf.placeholder(dtype=tf.float32, shape=(None, voxel_side, voxel_side, voxel_side, sdf_state_size + param_state_size),
+                                    name='label_encodings')
+        sequence_length = tf.placeholder(dtype=tf.int32, name='sequence_length')
+        self.full_encoding = tf.placeholder(dtype=tf.float32, shape=(1, voxel_side, voxel_side, voxel_side, sdf_state_size + param_state_size),
+                                                name='start_encoding')
+        self.parm_encodings = tf.placeholder(dtype=tf.float32, shape=(None, voxel_side, voxel_side, voxel_side, sdf_state_size),
+                                                 name='parameter_encodings')
+        training = tf.placeholder(dtype=tf.bool, name='phase')
+
+        with tf.variable_scope('Integrater_Network'):
+            self.list_of_encodings = self.full_encoding
+
+            def body(encoding, idx, list_of_encodings, parm_encodings):
+
+
+                x = tf.layers.conv3d(encoding, strides=(1, 1, 1),
+                                     kernel_size=(3, 3, 3),
+                                     filters=32 * param_state_size, padding='SAME',
+                                     name='integrator0',
+                                     activation=tf.nn.leaky_relu)
+                x = tf.layers.conv3d(x, strides=(1, 1, 1),
+                                     kernel_size=(3, 3, 3),
+                                     filters=16 * param_state_size, padding='SAME',
+                                     name='integrator1',
+                                     activation=tf.nn.leaky_relu)
+                x = tf.layers.conv3d(x, strides=(1, 1, 1),
+                                     kernel_size=(3, 3, 3),
+                                     filters=8 * param_state_size, padding='SAME',
+                                     name='integrator2',
+                                     activation=tf.nn.leaky_relu)
+                T = tf.layers.conv3d(x, strides=(1, 1, 1),
+                                     kernel_size=(1, 1, 1),
+                                     filters=param_state_size, padding='SAME',
+                                     name='new_v_latent',
+                                     activation=tf.nn.leaky_relu)
+
+                encoding = tf.slice(encoding, [0, 0, 0, 0, 0], [-1, -1, -1, -1, param_state_size])
+                sliced_parm_encoding = tf.slice(parm_encodings, [tf.cast(idx, dtype=tf.int32), 0, 0, 0, 0], [1, -1, -1, -1, -1])
+
+                sliced_parm_encoding = tf.expand_dims(sliced_parm_encoding, axis=0)
+                encoding = tf.concat((encoding, sliced_parm_encoding), axis=2)
+
+                encoding = encoding + tf.pad(T, tf.constant([[0, 0], [0, 0], [0, 0], [0, 0], [0, sdf_state_size]]), 'CONSTANT')
+                idx = idx + 1
+                list_of_encodings = tf.concat((list_of_encodings, encoding), axis=1)
+
+                return encoding, idx, list_of_encodings, parm_encodings
+
+            def condition(encoding, idx, list_of_encodings, parm_encodings):
+                return tf.less(idx, sequence_length)
+
+            idx = tf.constant(0)
+            self.full_encoding, idx, self.list_of_encodings, self.parm_encodings = tf.while_loop(condition, body, [
+            self.full_encoding, idx, self.list_of_encodings, self.parm_encodings], shape_invariants=[tf.TensorShape([1, 1,sdf_state_size + param_state_size]),
+                                                                                                         idx.get_shape(), tf.TensorShape([1, None, sdf_state_size + param_state_size]),
+                                                                                                         tf.TensorShape([None, sdf_state_size])])
+
+            self.list_of_encodings = tf.slice(self.list_of_encodings, [0, 0, 0],
+                                                  [-1, tf.shape(self.list_of_encodings)[1] - 1, -1],
+                                                  name='next_encoding')
+
+            self.loss_int = tf.reduce_mean(tf.square(self.list_of_encodings - tf.expand_dims(self.y, axis=0)))
+            self.merged_int = tf.summary.scalar('Integrator Loss', self.loss_int)
+            self.train_int = tf.train.AdamOptimizer(learning_rate=config.lr_max).minimize(self.loss_int)
+
+
+
 
 class NetWork(layers):
 
@@ -251,7 +326,7 @@ class NetWork(layers):
             c = tf.identity(self.encoder_network(self.x, sb_blocks=config.sb_blocks, n_filters=config.n_filters), name= 'encoded_field')
 
         with tf.variable_scope('Latent_State'):
-            if not config.convolutional:
+            if not config.conv:
                 self.full_encoding = (tf.identity(tf.concat((c, self.encoded_sdf), axis=1), name='full_encoding'))
             else:
                 self.full_encoding = tf.identity(tf.concat((c, self.encoded_sdf), axis=4), name='full_encoding')
@@ -262,16 +337,16 @@ class NetWork(layers):
         with tf.variable_scope('Differentiate'):
             if not config.fem_loss:
                 dy = self.central_difference(self.y)
-                d_labels = self.central_difference(self.labels)
+                self.d_labels = self.central_difference(self.labels)
             else:
                 dy = self.fem_differentiate(self.labels)
-                d_labels = self.fem_differentiate(self.y)
+                self.d_labels = self.fem_differentiate(self.y)
 
         with tf.variable_scope('Loss_Estimation'):
             self.l2_loss_v = tf.reduce_mean(tf.abs(self.y - self.labels))
-            self.l2_loss_dv = tf.reduce_mean(tf.abs(dy - d_labels))
+            self.l2_loss_dv = tf.reduce_mean(tf.abs(dy - self.d_labels))
 
-            self.loss = self.l2_loss_dv + self.l2_loss_v
+            self.loss = 0.2*self.l2_loss_dv + self.l2_loss_v
 
         with tf.variable_scope('Train'):
             self.step = tf.placeholder(dtype=tf.int32, name='step')
@@ -286,17 +361,27 @@ class NetWork(layers):
 
     def decoder_network(self, x, sdf, sb_blocks=1, n_filters=128):
 
-        if not config.convolutional:
+        if not config.conv:
             output_dim = pow(self.param_state_size, 3)*n_filters
             x = tf.layers.dense(x, output_dim, activation=tf.nn.leaky_relu, name='decoder_dense')
             x = tf.reshape(x, shape=(-1, self.param_state_size, self.param_state_size, self.param_state_size, n_filters), name='decoder_reshape')
 
+        x = tf.layers.conv3d(x, strides=(1, 1, 1),
+                             kernel_size=(3, 3, 3),
+                             filters=n_filters, padding='SAME',
+                             name='latent_output_convolution')
+
         x = self.BB(x, int(self.q), FEM=config.use_fem, sb_blocks=sb_blocks, n_filters=n_filters)
+
+        sdf = tf.layers.conv3d(sdf, strides=(1, 1, 1),
+                             kernel_size=(3, 3, 3),
+                             filters=n_filters, padding='SAME',
+                             name='output_convolution_sdf')
 
         x = tf.identity(tf.concat((x, sdf), axis=4), name='merge_sdf')
 
-        if config.use_fem:
-            x = self.differentiate_features(x, n_filters=n_filters, name='2')
+
+        x = self.differentiate_features(x, n_filters=n_filters, name='2')
 
         x = tf.layers.conv3d(x,   strides=(1, 1, 1),
                                   kernel_size=(3, 3, 3),
@@ -306,18 +391,18 @@ class NetWork(layers):
 
     def encoder_network(self, x, sb_blocks=1, n_filters=128):
 
-        if config.use_fem:
-            x = self.differentiate_features(x, n_filters=n_filters, name= '1')
+
+        x = self.differentiate_features(x, n_filters=n_filters, name= '1')
 
         x = self.BB(x, int(self.q), FEM=config.use_fem, upsample=False, sb_blocks=sb_blocks, n_filters=n_filters)
 
-        if not config.convolutional:
+        if not config.conv:
             x = tf.contrib.layers.flatten(x)
             x = tf.layers.dense(x, self.param_state_size, activation=tf.nn.leaky_relu)
         else:
             x = tf.layers.conv3d(x, strides=(1, 1, 1),
-                                 kernel_size=(1, 1, 1),
-                                 filters=8, padding='SAME',
+                                 kernel_size=(3, 3, 3),
+                                 filters=config.param_state_size, padding='SAME',
                                  name='latent_convolution',
                                  activation=tf.nn.leaky_relu)
         return x
@@ -326,13 +411,14 @@ class NetWork(layers):
     def encoder_network_sdf(self, x, sb_blocks=1, n_filters=8, output=8):
 
         x = self.BB(x, int(self.q), FEM=config.use_fem, upsample=False, sb_blocks=sb_blocks, n_filters=n_filters)
-        x = tf.contrib.layers.flatten(x)
-        if not config.convolutional:
-            x = tf.layers.dense(x, output, activation=tf.nn.leaky_relu)
+        if not config.conv:
+             x = tf.contrib.layers.flatten(x)
+             x = tf.layers.dense(x, output, activation=tf.nn.leaky_relu)
+
         else:
             x = tf.layers.conv3d(x, strides=(1, 1, 1),
                                  kernel_size=(1, 1, 1),
-                                 filters=8, padding='SAME',
+                                 filters=config.param_state_size, padding='SAME',
                                  name='latent_convolution',
                                  activation=tf.nn.leaky_relu)
         return x

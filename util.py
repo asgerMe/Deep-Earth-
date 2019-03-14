@@ -5,6 +5,8 @@ import imageio
 import numpy as np
 import tensorflow as tf
 
+
+
 def cosine_annealing(step, max_step, lr_min, lr_max):
     g_lr = tf.Variable(lr_max, name='g_lr')
     g_lr_update = tf.assign(g_lr, lr_min + 0.5 * (lr_max - lr_min) * (
@@ -14,24 +16,24 @@ def cosine_annealing(step, max_step, lr_min, lr_max):
 
 def get_multihot():
     grid_dict = ''
-
     index = 0
     values = 0
     dense_shape = 0
-    if config.use_fem:
-        try:
-            files = os.listdir(config.grid_dir)
 
-            print('Searching for grid in', files)
-            for file in files:
-                if file.endswith('.npz'):
-                    print('Found grid:', file)
-                    grid_dict = np.load(os.path.join(config.grid_dir, file))
-                    break
+    if True:
+        files = os.listdir(config.grid_dir)
 
-        except IOError:
-            print('WARNING - NO GRID DICT FOUND AT', config.grid_dir, '... Using regular conv nets')
-            config.use_fem = False
+        print('Searching for grid in', config.grid_dir)
+        for file in files:
+            if file.endswith('.npz'):
+                print('Found grid:', file)
+                grid_dict = np.load(os.path.join(config.grid_dir, file))
+                break
+
+        if grid_dict == '':
+            print('No grid file found in:', config.grid_dir,
+                 '... Supply grid file .npz here or change to dir with valid grid using -g')
+            exit()
 
         index = []
         values = []
@@ -71,14 +73,13 @@ def trilinear_interpolation_kernel():
 
 
 
-def create_gif_encoder(sess, net, i = 0, gif_length=2000, save_frequency = 5000, SCF = 1, restore=False):
+def create_gif_encoder(path, sess, net, i = 0, gif_length=2000, save_frequency = 5000, SCF = 1, restore=False):
 
-    if not i % save_frequency and i > 1:
-        search_dir = config.data_path
-        if os.path.isdir(config.alt_dir):
-            search_dir = config.alt_dir
+    if not i % save_frequency:
+        search_dir = path
         try:
             MOVIE = []
+            diff_MOVIE = []
 
             for F in range(gif_length):
                 try:
@@ -89,20 +90,45 @@ def create_gif_encoder(sess, net, i = 0, gif_length=2000, save_frequency = 5000,
 
                 if not restore:
                     network = net.y
+                    diff = net.d_labels
                 else:
                     network = net.graph.get_tensor_by_name("Decoder/y:0")
+                    diff = net.d_labels
 
                 reconstructed_vel = sess.run(network, feed_dict=test_input)
                 image = np.linalg.norm(np.squeeze(reconstructed_vel[0, :, 16, :, :]), axis=2)
                 image_gt = np.linalg.norm(np.squeeze(test_input['velocity:0'][0, :, 16, :, :]), axis=2)
+                image_diffs = sess.run(diff, feed_dict=test_input)
 
                 full_image = np.concatenate((image_gt, image), axis=1)
-                MOVIE.append(full_image)
+                diff_image = []
+                for diffs_num in range(np.shape(image_diffs)[4]):
+                    diff = np.squeeze(image_diffs[0, :, 16, :, diffs_num])
 
-            path = os.path.join(config.output_dir, 'test_vel_field_' + str(i) + '.gif')
+                    if np.amax(diff) > 0:
+                        diff = np.uint8(255 * (diff - np.amin(diff)) / (np.amax(diff) - np.amin(diff)))
+                    else:
+                        diff = np.uint8(diff)
+
+                    if diffs_num > 0:
+                        diff_image = np.abs(np.concatenate((diff_image, diff), axis=1))
+                    else:
+                        diff_image = np.abs(diff)
+
+
+
+                MOVIE.append(full_image)
+                diff_MOVIE.append(diff_image)
+
+            path = os.path.join(config.gif_path, 'test_vel_field_' + str(i) + '.gif')
             MOVIE = np.uint8(255 * (MOVIE - np.amin(MOVIE)) / (np.amax(MOVIE) - np.amin(MOVIE)))
             imageio.mimwrite(path, MOVIE)
-            print('gif saved at:', os.path.join(config.output_dir, 'test_vel_field_' + str(i) + '.gif'))
+
+            diff_path = os.path.join(config.gif_path, 'diff_vel_field_' + str(i) + '.gif')
+
+            imageio.mimwrite(diff_path, diff_MOVIE)
+
+            print('gif saved at:', os.path.join(config.gif_path, 'test_vel_field_' + str(i) + '.gif'))
 
         except OSError:
             print('No valid .npy test file in output dir / alternative dir not found')
@@ -152,15 +178,68 @@ def create_gif_integrator(sess, net, autoencoder_graph, roll_out, i = 0, gif_len
                 image = np.linalg.norm(np.squeeze(v_next[0, :, 16, :, :]), axis=2)
                 MOVIE.append(image)
 
-            path = os.path.join(config.output_dir, 'integrator_vel_field_' + str(i) + '.gif')
+            path = os.path.join(config.gif_path, 'integrator_vel_field_' + str(i) + '.gif')
             MOVIE = np.uint8(255 * (MOVIE - np.amin(MOVIE)) / (np.amax(MOVIE) - np.amin(MOVIE)))
             imageio.mimwrite(path, MOVIE)
 
-            print('gif saved at:', os.path.join(config.output_dir, 'integrator_vel_field_' +str(i)+ '.gif'))
+            print('gif saved at:', os.path.join(config.gif_path, 'integrator_vel_field_' +str(i)+ '.gif'))
         except OSError:
             print('No valid .npy test file in output dir / alternative dir not found')
 
 
 
+def create_dirs(clear=False):
+    if (os.path.isdir(config.data_path)):
+        output_path = os.path.join(config.data_path, 'network_output')
 
+        grid_path = os.path.join(config.data_path, 'grid')
+        config.grid_dir = grid_path
+        graphs_path = os.path.join(output_path, 'graphs')
+
+        integrator_graph = os.path.join(graphs_path, 'integrator')
+        autoencoder_graph = os.path.join(graphs_path, 'autoencoder')
+        test_fields = os.path.join(output_path, 'fields')
+        gifs = os.path.join(output_path, 'gifs')
+
+        tensorboard_path = os.path.join(output_path, 'tensorboard')
+
+
+        if not os.path.isdir(output_path):
+            print('Creating Folders')
+            os.mkdir(output_path)
+        config.output_dir = output_path
+
+        if not os.path.isdir(grid_path):
+            print('creating', grid_path)
+            os.mkdir(grid_path)
+        config.grid_dir = grid_path
+
+        if not os.path.isdir(graphs_path):
+            print('creating', graphs_path)
+            os.mkdir(graphs_path)
+
+        if not os.path.isdir(integrator_graph):
+            print('creating', integrator_graph)
+            os.mkdir(integrator_graph)
+        config.path_i = integrator_graph
+
+        if not os.path.isdir(autoencoder_graph):
+            print('creating', autoencoder_graph)
+            os.mkdir(autoencoder_graph)
+        config.path_e = autoencoder_graph
+
+        if not os.path.isdir(test_fields):
+            print('creating', test_fields)
+            os.mkdir(test_fields)
+        config.test_field_path = test_fields
+
+        if not os.path.isdir(gifs):
+            print('creating', gifs)
+            os.mkdir(gifs)
+        config.gif_path = gifs
+
+        if not os.path.isdir(tensorboard_path):
+            print('creating', tensorboard_path)
+            os.mkdir(tensorboard_path)
+        config.tensor_board = tensorboard_path
 
