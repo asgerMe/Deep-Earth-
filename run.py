@@ -3,6 +3,7 @@ import config
 import train
 import os
 import util
+import inference
 
 
 parser = argparse.ArgumentParser()
@@ -26,7 +27,7 @@ parser.add_argument('-lr_max', '--max_learn_rate', type=float, default=0.00005, 
 parser.add_argument('-ep', '--period', default=2500, help="period of cosine annealing")
 parser.add_argument('-tri', '--trilinear', action='store_true', help="use tri-linear interpolation for resampling and not nearest neighbour")
 parser.add_argument('-mlp', '--encoder_mlp_layers', default = 1, type = int,  help="MLP layers to use on each side of the latent state projection")
-parser.add_argument('-sdf', '--sdf_state_size', default = 2, type = int,  help="size of the boundary conditions encoding")
+parser.add_argument('-sdf', '--sdf_state_size', default = 8, type = int,  help="size of the boundary conditions encoding")
 parser.add_argument('-gif', '--gif_saver_f', default = 5000, type = int,  help="Frequency for saving gifs")
 parser.add_argument('-b', '--batch_size', default = 1, type=int, help='Batch size for training')
 parser.add_argument('-fem', '--use_differential_kernels', action='store_true', help="use fem layers")
@@ -79,4 +80,9 @@ if args.train:
 
 elif args.train_integrator:
     train.train_integrator()
+else:
+    print('Inference AE with random field')
+    inference.restore_ae(config.path_e)
+
+
 

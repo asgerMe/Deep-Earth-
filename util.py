@@ -4,6 +4,26 @@ import os
 import imageio
 import numpy as np
 import tensorflow as tf
+import matplotlib as mpl
+import matplotlib.pyplot as plt
+from matplotlib import cm
+
+def find_graph(path):
+    if not len(os.listdir(path)):
+        print('No valid graph files')
+
+    for file in os.listdir(path):
+        print(file)
+        if file.endswith('.ckpt.meta'):
+            try:
+                graph_handle = tf.train.import_meta_graph(os.path.join(config.path_e, file))
+                print('Importing graph')
+                return graph_handle
+
+            except IOError:
+                print('Cant import graph')
+                return 0
+
 
 
 
@@ -72,43 +92,69 @@ def trilinear_interpolation_kernel():
     return kernel
 
 
+def get_name_ext(net = 'AE'):
+
+    name = ''
+    dc = "DL"
+
+    if config.conv:
+        dc = "CL"
+
+    diff = 'off'
+    floss = 'off'
+
+    if config.fem_loss:
+        floss = 'on'
+
+    if config.use_fem:
+        diff = 'on'
+
+    name = net + '___EncoderArc___' + dc + '_LSS_' + str(config.param_state_size)\
+               + '_SBB_' + str(config.sb_blocks) + '_BFS_' + str(config.n_filters) +\
+               '_FEMCONV_' + diff + '_FEMLoss_' + floss
+
+    return str(name)
 
 def create_gif_encoder(path, sess, net, i = 0, gif_length=2000, save_frequency = 5000, SCF = 1, restore=False):
-
+    viridis = cm.get_cmap('inferno', 12)
     if not i % save_frequency:
         search_dir = path
         try:
             MOVIE = []
             diff_MOVIE = []
-
+            print('Generating gif')
             for F in range(gif_length):
                 try:
                     test_input = fetch_data.get_volume(search_dir, batch_size=1, time_idx=F, scaling_factor=SCF)
+                    if not test_input:
+                        break
                 except IndexError:
                     print('index out of range -> creating gif with stashed frames')
                     break
 
-                if not restore:
-                    network = net.y
-                    diff = net.d_labels
-                else:
-                    network = net.graph.get_tensor_by_name("Decoder/y:0")
-                    diff = net.d_labels
+                network = net.y
+                diff = net.d_labels
 
                 reconstructed_vel = sess.run(network, feed_dict=test_input)
                 image = np.linalg.norm(np.squeeze(reconstructed_vel[0, :, 16, :, :]), axis=2)
                 image_gt = np.linalg.norm(np.squeeze(test_input['velocity:0'][0, :, 16, :, :]), axis=2)
                 image_diffs = sess.run(diff, feed_dict=test_input)
 
-                full_image = np.concatenate((image_gt, image), axis=1)
+                test_input['velocity:0'] *= 0
+
+                reconstructed_vel0 = sess.run(network, feed_dict=test_input)
+                image0 = np.linalg.norm(np.squeeze(reconstructed_vel0[0, :, 16, :, :]), axis=2)
+
+                full_image = np.concatenate((image_gt, image, image0), axis=1)
                 diff_image = []
                 for diffs_num in range(np.shape(image_diffs)[4]):
+
                     diff = np.squeeze(image_diffs[0, :, 16, :, diffs_num])
 
                     if np.amax(diff) > 0:
-                        diff = np.uint8(255 * (diff - np.amin(diff)) / (np.amax(diff) - np.amin(diff)))
+                        diff = (np.uint8(255*viridis((diff - np.amin(diff)) / (np.amax(diff) - np.amin(diff)))))
                     else:
-                        diff = np.uint8(diff)
+                        diff = viridis(np.uint8(diff))
 
                     if diffs_num > 0:
                         diff_image = np.abs(np.concatenate((diff_image, diff), axis=1))
@@ -116,19 +162,20 @@ def create_gif_encoder(path, sess, net, i = 0, gif_length=2000, save_frequency =
                         diff_image = np.abs(diff)
 
 
-
                 MOVIE.append(full_image)
                 diff_MOVIE.append(diff_image)
 
-            path = os.path.join(config.gif_path, 'test_vel_field_' + str(i) + '.gif')
-            MOVIE = np.uint8(255 * (MOVIE - np.amin(MOVIE)) / (np.amax(MOVIE) - np.amin(MOVIE)))
+
+
+            path = os.path.join(config.gif_path, 'test_vel_field_' + get_name_ext() + str(i) + '.gif')
+            MOVIE = np.uint8(255 * viridis( (MOVIE - np.amin(MOVIE)) / (np.amax(MOVIE) - np.amin(MOVIE))))
             imageio.mimwrite(path, MOVIE)
 
-            diff_path = os.path.join(config.gif_path, 'diff_vel_field_' + str(i) + '.gif')
+            diff_path = os.path.join(config.gif_path, 'diff_vel_field_' + get_name_ext() +  str(i) + '.gif')
 
             imageio.mimwrite(diff_path, diff_MOVIE)
 
-            print('gif saved at:', os.path.join(config.gif_path, 'test_vel_field_' + str(i) + '.gif'))
+            print('gif saved at:', os.path.join(config.gif_path, 'test_vel_field_' + get_name_ext() + str(i) + '.gif'))
 
         except OSError:
             print('No valid .npy test file in output dir / alternative dir not found')
@@ -202,12 +249,19 @@ def create_dirs(clear=False):
         gifs = os.path.join(output_path, 'gifs')
 
         tensorboard_path = os.path.join(output_path, 'tensorboard')
-
+        bmd = os.path.join(output_path, 'bench_mark_data')
 
         if not os.path.isdir(output_path):
             print('Creating Folders')
             os.mkdir(output_path)
         config.output_dir = output_path
+
+        if not os.path.isdir(bmd):
+            print('Creating Folders')
+            os.mkdir(bmd)
+        config.benchmark_data = bmd
+
+
 
         if not os.path.isdir(grid_path):
             print('creating', grid_path)

@@ -6,28 +6,34 @@ import network as nn
 import os
 import time
 import util
+import inference
 
 
 def train_network():
     tf.reset_default_graph()
     net = nn.NetWork(config.data_size, param_state_size=config.param_state_size)
-
     init = tf.global_variables_initializer()
+
+
     SCF = 1#fetch_data.get_scaling_factor(config.data_path)
 
     with tf.Session() as sess:
         sess.run(init)
 
-        sub_dir = os.path.join(config.tensor_board, time.strftime("%Y%m%d-%H%M%S"))
-        sub_dir_test = os.path.join(config.tensor_board, 'test'+time.strftime("%Y%m%d-%H%M%S"))
+        sub_dir = os.path.join(config.tensor_board, 'TS' + util.get_name_ext() + time.strftime("%Y%m%d-%H%M%S"))
+        sub_dir_test = os.path.join(config.tensor_board, 'TS_Test'+ util.get_name_ext()+time.strftime("%Y%m%d-%H%M%S"))
         os.mkdir(sub_dir)
         writer = tf.summary.FileWriter(sub_dir)
         writer_test = tf.summary.FileWriter(sub_dir_test)
         writer.add_graph(sess.graph)
 
         saver = tf.train.Saver(tf.global_variables())
-        store_integrator_loss_tb = 0
+        graph_handle = util.find_graph(config.path_e)
+
         store_integrator_loss = -1
+
+        if graph_handle:
+            graph_handle.restore(sess, tf.train.latest_checkpoint(config.path_e))
 
         for i in range(config.training_runs):
 
@@ -42,17 +48,25 @@ def train_network():
 
 
             if os.path.isdir(config.path_e) and i % config.save_freq == 0:
-                saver.save(sess, os.path.join(config.path_e, time.strftime("%Y%m%d-%H%M%S") + "_trained_model.ckpt"))
+                saver.save(sess, os.path.join(config.path_e,  util.get_name_ext() + "_trained_model.ckpt"))
                 print('Saving graph')
 
             if i % 500 == 0 and os.path.isdir(config.tensor_board):
-                inputs_ci = fetch_data.get_volume('D:\output\circular_ice', 1, scaling_factor=SCF)
+                inputs_ci = fetch_data.get_volume(config.benchmark_data, 1, scaling_factor=SCF)
+                if inputs_ci:
+                    util.create_gif_encoder(config.benchmark_data, sess, net, i=i, save_frequency=5000,
+                                            SCF=SCF)
+                if not inputs_ci:
+                    inputs_ci = fetch_data.get_volume(config.data_path, 1, scaling_factor=SCF)
+                    util.create_gif_encoder(config.data_path, sess, net, i=i, save_frequency=5000,
+                                            SCF=SCF)
+
                 inputs_ci['Train/step:0'] = i
 
                 loss, merged = sess.run([net.loss, net.merged], inputs_ci)
                 writer_test.add_summary(merged, i)
                 test_field = sess.run(net.y, inputs_ci)
-                np.save(os.path.join(config.test_field_path, 'train_field' + time.strftime("%Y%m%d-%H%M%S")), test_field)
+                np.save(os.path.join(config.test_field_path, 'train_field' +  util.get_name_ext() + time.strftime("%Y%m%d-%H%M")), test_field)
 
                 # Record execution stats
                 run_options = tf.RunOptions(trace_level=tf.RunOptions.FULL_TRACE)
@@ -66,7 +80,8 @@ def train_network():
             if not i % 10:
                 print('Training Run', i, 'Learning Rate', lr,'//  Encoder Loss:', loss, '//  Integrator Loss', store_integrator_loss)
 
-            util.create_gif_encoder("D:/output/circular_ice/", sess, net, i=i, save_frequency=config.save_gif, SCF=SCF)
+
+
 
 
 def train_integrator():
@@ -118,13 +133,14 @@ def train_integrator():
         for i in range(config.training_runs):
             input_sequence, input_0 = fetch_data.get_volume(config.data_path, 1, sequential=True, sequence_length=config.sequence_length)
 
-            start_encoding = sess.run([full_encoding], input_0)
-            parameter_encodings, label_encodings = sess.run([encoded_sdf, full_encoding], input_sequence)
+            start_encoding = sess.run(full_encoding, input_0)
+            sdf_encodings, label_encodings = sess.run([encoded_sdf, full_encoding], input_sequence)
 
             integrator_feed_dict = {'label_encodings:0': label_encodings,
-                                    'parameter_encodings:0': parameter_encodings,
-                                    'start_encoding:0': start_encoding, 'phase:0': True,
+                                    'sdf_encodings:0': sdf_encodings,
+                                    'start_encoding:0': start_encoding,
                                     "sequence_length:0": config.sequence_length}
+
 
 
             if i % config.f_tensorboard == 0 and config.f_tensorboard != 0 and os.path.isdir(config.tensor_board):
@@ -142,4 +158,4 @@ def train_integrator():
                     saver.save(sess, os.path.join(config.path_i, "trained_integrator_model.ckpt"))
                     print('Saving graph')
 
-            util.create_gif_integrator(sess, int_net, graph, roll_out = 2000, i=i, save_frequency=config.save_gif, SCF=SCF)
+            #util.create_gif_integrator(sess, int_net, graph, roll_out = 2000, i=i, save_frequency=config.save_gif, SCF=1)

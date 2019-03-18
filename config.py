@@ -17,7 +17,7 @@ lr_update = 'decay'
 resample = False
 period = 5000
 f_tensorboard = 10
-sdf_state=2
+sdf_state = 2
 start_integrator_training = 50000
 save_gif = 2000
 
@@ -41,3 +41,5 @@ batch_size = 5
 conv = False
 
 fem_loss = True
+
+benchmark_data = ''

@@ -238,21 +238,21 @@ class Convo_IntegratorNetwork:
 
     def __init__(self, voxel_side, param_state_size=8, sdf_state_size=8):
 
-        self.y = tf.placeholder(dtype=tf.float32, shape=(None, voxel_side, voxel_side, voxel_side, sdf_state_size + param_state_size),
+        self.y = tf.placeholder(dtype=tf.float32, shape=(None, param_state_size, param_state_size, param_state_size, sdf_state_size + param_state_size),
                                     name='label_encodings')
         sequence_length = tf.placeholder(dtype=tf.int32, name='sequence_length')
-        self.full_encoding = tf.placeholder(dtype=tf.float32, shape=(1, voxel_side, voxel_side, voxel_side, sdf_state_size + param_state_size),
+
+        self.full_encoding = tf.placeholder(dtype=tf.float32, shape=(1, param_state_size, param_state_size, param_state_size, sdf_state_size + param_state_size),
                                                 name='start_encoding')
-        self.parm_encodings = tf.placeholder(dtype=tf.float32, shape=(None, voxel_side, voxel_side, voxel_side, sdf_state_size),
-                                                 name='parameter_encodings')
-        training = tf.placeholder(dtype=tf.bool, name='phase')
+
+        self.sdf_encodings = tf.placeholder(dtype=tf.float32, shape=(None, param_state_size, param_state_size, param_state_size, sdf_state_size),
+                                                 name='sdf_encodings')
+
 
         with tf.variable_scope('Integrater_Network'):
             self.list_of_encodings = self.full_encoding
 
-            def body(encoding, idx, list_of_encodings, parm_encodings):
-
-
+            def body(encoding, idx, list_of_encodings, sdf_encodings):
                 x = tf.layers.conv3d(encoding, strides=(1, 1, 1),
                                      kernel_size=(3, 3, 3),
                                      filters=32 * param_state_size, padding='SAME',
@@ -274,32 +274,28 @@ class Convo_IntegratorNetwork:
                                      name='new_v_latent',
                                      activation=tf.nn.leaky_relu)
 
-                encoding = tf.slice(encoding, [0, 0, 0, 0, 0], [-1, -1, -1, -1, param_state_size])
-                sliced_parm_encoding = tf.slice(parm_encodings, [tf.cast(idx, dtype=tf.int32), 0, 0, 0, 0], [1, -1, -1, -1, -1])
-
-                sliced_parm_encoding = tf.expand_dims(sliced_parm_encoding, axis=0)
-                encoding = tf.concat((encoding, sliced_parm_encoding), axis=2)
-
                 encoding = encoding + tf.pad(T, tf.constant([[0, 0], [0, 0], [0, 0], [0, 0], [0, sdf_state_size]]), 'CONSTANT')
+
+                updated_encoding = tf.slice(encoding, [0, 0, 0, 0, 0], [-1, -1, -1, -1, param_state_size])
+                next_sdf_state = tf.slice(sdf_encodings, [idx + 1, 0, 0, 0, 0], [1, -1, -1, -1, -1])
+                updated_encoding = tf.concat((updated_encoding, next_sdf_state), axis=4)
+
+                list_of_encodings = tf.concat((list_of_encodings, updated_encoding), axis=0)
+
                 idx = idx + 1
-                list_of_encodings = tf.concat((list_of_encodings, encoding), axis=1)
 
-                return encoding, idx, list_of_encodings, parm_encodings
+                return updated_encoding, idx, list_of_encodings, sdf_encodings
 
-            def condition(encoding, idx, list_of_encodings, parm_encodings):
-                return tf.less(idx, sequence_length)
+            def condition(encoding, idx, list_of_encodings, sdf_encodings):
+                return tf.less(idx, sequence_length-1)
 
-            idx = tf.constant(0)
-            self.full_encoding, idx, self.list_of_encodings, self.parm_encodings = tf.while_loop(condition, body, [
-            self.full_encoding, idx, self.list_of_encodings, self.parm_encodings], shape_invariants=[tf.TensorShape([1, 1,sdf_state_size + param_state_size]),
-                                                                                                         idx.get_shape(), tf.TensorShape([1, None, sdf_state_size + param_state_size]),
-                                                                                                         tf.TensorShape([None, sdf_state_size])])
+            idx = tf.constant(0, dtype=tf.int32)
+            self.full_encoding, idx, self.list_of_encodings, self.sdf_encodings = tf.while_loop(condition, body, [
+            self.full_encoding, idx, self.list_of_encodings, self.sdf_encodings], shape_invariants=[tf.TensorShape([1, param_state_size, param_state_size, param_state_size, sdf_state_size + param_state_size]),
+                                                                                                         idx.get_shape(), tf.TensorShape([None, param_state_size, param_state_size, param_state_size, sdf_state_size + param_state_size]),
+                                                                                                         tf.TensorShape([None,  param_state_size, param_state_size, param_state_size, sdf_state_size])])
 
-            self.list_of_encodings = tf.slice(self.list_of_encodings, [0, 0, 0],
-                                                  [-1, tf.shape(self.list_of_encodings)[1] - 1, -1],
-                                                  name='next_encoding')
-
-            self.loss_int = tf.reduce_mean(tf.square(self.list_of_encodings - tf.expand_dims(self.y, axis=0)))
+            self.loss_int = tf.reduce_mean(tf.square(self.list_of_encodings - self.y))
             self.merged_int = tf.summary.scalar('Integrator Loss', self.loss_int)
             self.train_int = tf.train.AdamOptimizer(learning_rate=config.lr_max).minimize(self.loss_int)
 
@@ -357,7 +353,7 @@ class NetWork(layers):
         tf.summary.scalar('Encoder Field Loss', self.l2_loss_v)
         tf.summary.scalar('Encoder Gradient Loss', self.l2_loss_dv)
         tf.summary.histogram('Latent State', self.full_encoding)
-        self.merged = tf.summary.merge_all()
+        self.merged = tf.identity(tf.summary.merge_all(), name='merged')
 
     def decoder_network(self, x, sdf, sb_blocks=1, n_filters=128):
 

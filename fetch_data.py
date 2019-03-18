@@ -43,8 +43,8 @@ def get_volume(data_path, batch_size=1, time_idx = -1, sequential=False, sequenc
                     full_path = os.path.join(data_path, random_file_name)
 
                 except ValueError:
-                    print('no .npy files in path')
-                    exit()
+                    print('no .npy files in path', data_path)
+                    return 0
 
                 try:
                     data = np.load(full_path, mmap_mode='r')
