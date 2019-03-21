@@ -4,8 +4,9 @@ import os
 import imageio
 import numpy as np
 import tensorflow as tf
-import matplotlib as mpl
 import matplotlib.pyplot as plt
+
+
 from matplotlib import cm
 
 def find_graph(path):
@@ -124,6 +125,7 @@ def create_gif_encoder(path, sess, net, i = 0, gif_length=2000, save_frequency =
             diff_MOVIE = []
             print('Generating gif')
             for F in range(gif_length):
+                print(F)
                 try:
                     test_input = fetch_data.get_volume(search_dir, batch_size=1, time_idx=F, scaling_factor=SCF)
                     if not test_input:
@@ -131,30 +133,34 @@ def create_gif_encoder(path, sess, net, i = 0, gif_length=2000, save_frequency =
                 except IndexError:
                     print('index out of range -> creating gif with stashed frames')
                     break
-
-                network = net.y
-                diff = net.d_labels
+                try:
+                    network = net.y
+                    diff = net.d_labels
+                except:
+                    network = net.get_tensor_by_name('Decoder/decoder:0')
+                    diff = net.get_tensor_by_name('Differentiate/diff:0')
 
                 reconstructed_vel = sess.run(network, feed_dict=test_input)
-                image = np.linalg.norm(np.squeeze(reconstructed_vel[0, :, 16, :, :]), axis=2)
-                image_gt = np.linalg.norm(np.squeeze(test_input['velocity:0'][0, :, 16, :, :]), axis=2)
+                image = np.linalg.norm(np.squeeze(reconstructed_vel[0, :,  int(config.data_size/2), :, :]), axis=2)
+
+                image_gt = np.linalg.norm(np.squeeze(test_input['velocity:0'][0, :, int(config.data_size/2), :, :]), axis=2)
                 image_diffs = sess.run(diff, feed_dict=test_input)
 
                 test_input['velocity:0'] *= 0
 
                 reconstructed_vel0 = sess.run(network, feed_dict=test_input)
-                image0 = np.linalg.norm(np.squeeze(reconstructed_vel0[0, :, 16, :, :]), axis=2)
+                image0 = np.linalg.norm(np.squeeze(reconstructed_vel0[0, :,  int(config.data_size/2), :, :]), axis=2)
+
 
                 full_image = np.concatenate((image_gt, image, image0), axis=1)
                 diff_image = []
                 for diffs_num in range(np.shape(image_diffs)[4]):
-
                     diff = np.squeeze(image_diffs[0, :, 16, :, diffs_num])
 
                     if np.amax(diff) > 0:
-                        diff = (np.uint8(255*viridis((diff - np.amin(diff)) / (np.amax(diff) - np.amin(diff)))))
+                        diff = (np.uint8(255*((diff - np.amin(diff)) / (np.amax(diff) - np.amin(diff)))))
                     else:
-                        diff = viridis(np.uint8(diff))
+                        diff = (np.uint8(diff))
 
                     if diffs_num > 0:
                         diff_image = np.abs(np.concatenate((diff_image, diff), axis=1))
@@ -296,4 +302,37 @@ def create_dirs(clear=False):
             print('creating', tensorboard_path)
             os.mkdir(tensorboard_path)
         config.tensor_board = tensorboard_path
+
+
+def fig2data(fig):
+    # draw the renderer
+    fig.canvas.draw()
+
+    # Get the RGBA buffer from the figure
+    w, h = fig.canvas.get_width_height()
+    buf = np.fromstring(fig.canvas.tostring_argb(), dtype=np.uint8)
+    buf.shape = (w, h, 4)
+
+    # canvas.tostring_argb give pixmap in ARGB mode. Roll the ALPHA channel to have it in RGBA mode
+    buf = np.roll(buf, 3, axis=2)
+    return buf
+
+def contour(field1, field2):
+    slice1 = np.linalg.norm(np.squeeze(field1[0, 1:, int(config.data_size/2), 1:, :]), axis=2)
+    slice2 = np.linalg.norm(np.squeeze(field2[0, 1:, int(config.data_size / 2), 1:, :]), axis=2)
+
+    plt.figure(1)
+
+    x = np.arange(0, config.data_size-1, 1)
+    X, Y = np.meshgrid(x, x)
+
+    ax1 = plt.subplot(131)
+    plt.contourf(X, Y, slice1,levels=range(100), extend ='neither')
+    ax2 = plt.subplot(132,  sharex=ax1)
+    plt.contourf(X, Y, slice2, levels=range(100), extend ='neither')
+    ax3 = plt.subplot(133, sharex=ax2)
+    plt.contourf(X, Y,  abs(slice1 - slice2), levels=range(100))
+
+
+    plt.show()
 

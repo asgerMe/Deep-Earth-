@@ -333,14 +333,14 @@ class NetWork(layers):
         with tf.variable_scope('Differentiate'):
             if not config.fem_loss:
                 dy = self.central_difference(self.y)
-                self.d_labels = self.central_difference(self.labels)
+                self.d_labels = tf.identity(self.central_difference(self.diff_labels), name='diff')
             else:
                 dy = self.fem_differentiate(self.labels)
-                self.d_labels = self.fem_differentiate(self.y)
+                self.d_labels = tf.identity(self.fem_differentiate(self.y), name='diff')
 
         with tf.variable_scope('Loss_Estimation'):
-            self.l2_loss_v = tf.reduce_mean(tf.abs(self.y - self.labels))
-            self.l2_loss_dv = tf.reduce_mean(tf.abs(dy - self.d_labels))
+            self.l2_loss_v = tf.reduce_mean(tf.slice(tf.abs(self.y - self.labels), [0,1,1,1,0], [-1,-1,-1,-1,-1]))
+            self.l2_loss_dv = tf.reduce_mean(tf.slice(tf.abs(dy - self.d_labels), [0, 1, 1, 1, 0], [-1, -1, -1, -1, -1]))
 
             self.loss = 0.2*self.l2_loss_dv + self.l2_loss_v
 
@@ -365,14 +365,18 @@ class NetWork(layers):
         x = tf.layers.conv3d(x, strides=(1, 1, 1),
                              kernel_size=(3, 3, 3),
                              filters=n_filters, padding='SAME',
-                             name='latent_output_convolution')
+                             name='latent_output_convolution'
+                             , activation=tf.nn.leaky_relu)
 
         x = self.BB(x, int(self.q), FEM=config.use_fem, sb_blocks=sb_blocks, n_filters=n_filters)
 
         sdf = tf.layers.conv3d(sdf, strides=(1, 1, 1),
                              kernel_size=(3, 3, 3),
                              filters=n_filters, padding='SAME',
-                             name='output_convolution_sdf')
+                             name='output_convolution_sdf',
+                               activation=tf.nn.relu)
+
+        x = self.differentiate_features(x, n_filters=n_filters, name='1')
 
         x = tf.identity(tf.concat((x, sdf), axis=4), name='merge_sdf')
 
@@ -387,8 +391,8 @@ class NetWork(layers):
 
     def encoder_network(self, x, sb_blocks=1, n_filters=128):
 
-
-        x = self.differentiate_features(x, n_filters=n_filters, name= '1')
+        x = self.differentiate_features(x, n_filters=n_filters, name='3')
+        x = self.differentiate_features(x, n_filters=n_filters, name='4')
 
         x = self.BB(x, int(self.q), FEM=config.use_fem, upsample=False, sb_blocks=sb_blocks, n_filters=n_filters)
 
@@ -398,7 +402,7 @@ class NetWork(layers):
         else:
             x = tf.layers.conv3d(x, strides=(1, 1, 1),
                                  kernel_size=(3, 3, 3),
-                                 filters=config.param_state_size, padding='SAME',
+                                 filters=config.field_state, padding='SAME',
                                  name='latent_convolution',
                                  activation=tf.nn.leaky_relu)
         return x
@@ -414,7 +418,7 @@ class NetWork(layers):
         else:
             x = tf.layers.conv3d(x, strides=(1, 1, 1),
                                  kernel_size=(1, 1, 1),
-                                 filters=config.param_state_size, padding='SAME',
+                                 filters=config.sdf_state, padding='SAME',
                                  name='latent_convolution',
                                  activation=tf.nn.leaky_relu)
         return x

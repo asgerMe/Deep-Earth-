@@ -94,11 +94,11 @@ def train_integrator():
         if not config.conv:
             int_net = nn.IntegratorNetwork(param_state_size=config.param_state_size, sdf_state_size=config.sdf_state)
         else:
-            int_net = nn.Convo_IntegratorNetwork(config.data_size,param_state_size= config.param_state_size, sdf_state_size=config.sdf_state)
+            int_net = nn.Convo_IntegratorNetwork(config.data_size, param_state_size= config.field_state, sdf_state_size=config.sdf_state)
 
     init = tf.global_variables_initializer()
 
-    SCF = 1#fetch_data.get_scaling_factor(config.data_path)
+    SCF = 1   #fetch_data.get_scaling_factor(config.data_path)
 
     for file in os.listdir(config.path_e):
         print(file)

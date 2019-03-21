@@ -41,7 +41,7 @@ def get_volume(data_path, batch_size=1, time_idx = -1, sequential=False, sequenc
                         random_file_name = list_files[0]
 
                     full_path = os.path.join(data_path, random_file_name)
-
+                    print(full_path)
                 except ValueError:
                     print('no .npy files in path', data_path)
                     return 0

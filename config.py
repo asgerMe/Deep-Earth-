@@ -17,7 +17,8 @@ lr_update = 'decay'
 resample = False
 period = 5000
 f_tensorboard = 10
-sdf_state = 2
+sdf_state = 8
+field_state= 8
 start_integrator_training = 50000
 save_gif = 2000
 
@@ -43,3 +44,4 @@ conv = False
 fem_loss = True
 
 benchmark_data = ''
+inf_frame = -1

@@ -23,7 +23,7 @@ parser.add_argument('-tb', '--tensorboard_saving_freq', help= "save tensorboard 
 parser.add_argument('-pd', '--prediction_length', help = "Number of frames to predict", default=30, type=int)
 parser.add_argument('-dp', '--deploy_path', default='', help="Alternative dir for inference data")
 parser.add_argument('-lr_min', '--min_learn_rate', type=float, default=0.0000025, help="Minimum learning rate attained during cosine annealing")
-parser.add_argument('-lr_max', '--max_learn_rate', type=float, default=0.00005, help="Maximum learning rate attained during cosine annealing")
+parser.add_argument('-lr_max', '--max_learn_rate', type=float, default=0.0001, help="Maximum learning rate attained during cosine annealing")
 parser.add_argument('-ep', '--period', default=2500, help="period of cosine annealing")
 parser.add_argument('-tri', '--trilinear', action='store_true', help="use tri-linear interpolation for resampling and not nearest neighbour")
 parser.add_argument('-mlp', '--encoder_mlp_layers', default = 1, type = int,  help="MLP layers to use on each side of the latent state projection")
@@ -34,6 +34,7 @@ parser.add_argument('-fem', '--use_differential_kernels', action='store_true', h
 parser.add_argument('-cv', '--convolution', action='store_true', help="use convolutions all the way through the autoencoder")
 parser.add_argument('-fem_loss', '--fem_difference', action='store_true', help="use the fem differentials as loss metric")
 parser.add_argument('-clear', '--clear', action='store_true', help="clear graphs and test fields in native dirs")
+parser.add_argument('-inf', '--iframe', default=-1, help="display frame during inference")
 
 parser.add_argument('-g', '--grid_path', default ='',  help='Path to grid dictionary')
 args = parser.parse_args()
@@ -82,7 +83,7 @@ elif args.train_integrator:
     train.train_integrator()
 else:
     print('Inference AE with random field')
-    inference.restore_ae(config.path_e)
+    inference.restore_ae(data=config.data_path, graph_path=config.path_e, grid=config.grid_dir, frame=args.iframe)
 
 
 
