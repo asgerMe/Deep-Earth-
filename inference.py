@@ -19,7 +19,6 @@ def restore_ae(data, graph_path, grid, frame=-1):
         sess.run(init)
         graph_handle.restore(sess, tf.train.latest_checkpoint(config.path_e))
         inputs = fetch_data.get_volume(config.benchmark_data, time_idx=frame, batch_size=1, scaling_factor=1)
-        inputs['Train/step:0'] = 0
 
         v = sess.run(graph.get_tensor_by_name('Decoder/decoder:0'), feed_dict=inputs)
         util.contour(v, inputs['velocity:0'])

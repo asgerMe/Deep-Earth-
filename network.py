@@ -15,6 +15,48 @@ class layers:
             self.grid_dict = grid
 
         self.Test = 100
+    def B(self):
+
+
+        prim_num = 0
+        BCB = []
+        for ij in self.grid_dict['inv_j']:
+
+            B = np.zeros([6, 12])
+
+            B[0, 0] = ij[1];  B[0, 3] = ij[5]; B[0, 6] = ij[9];  B[0, 9] = ij[13];   B[1, 1] = ij[2]; B[1, 4] = ij[6]
+            B[1, 7] = ij[10]; B[1, 10] = ij[14];   B[2, 2] = ij[3]; B[2, 5] = ij[7]; B[2, 8] = ij[11]; B[2, 11] = ij[15]
+            B[3, 0] = ij[2]; B[3, 1] = ij[1]; B[3, 3] = ij[6]; B[3, 4] = ij[5]; B[3, 6] = ij[10];  B[3, 7] = ij[9]
+            B[3, 9] = ij[14];  B[3, 10] = ij[13]; B[4, 2] = ij[3]; B[4, 5] = ij[2]; B[4, 8] = ij[7]; B[4, 11] = ij[6]
+            B[4, 2] = ij[11]; B[4, 5] = ij[10];  B[4, 8] = ij[15]; B[4, 11] = ij[14];   B[5, 0] = ij[3];  B[5, 2] = ij[1]
+            B[5, 3] = ij[7]; B[5, 5] = ij[5];  B[5, 6] = ij[11];  B[5, 8] = ij[9]; B[5, 9] = ij[14];  B[5, 11] = ij[13]
+            C = self.C(100, 0.25)
+            CB = np.matmul(C, B)
+            BCB.append( np.matmul(np.transpose(B), CB))
+            prim_num += 1
+
+        return tf.constant(BCB)
+
+    def C(self, E, v):
+        C = np.zeros([6, 6])
+        a = E/((1 + v)*(1 - 2*v))
+        b = 1 - v
+        c = 0.5 - v
+
+        C[0, 0] = b
+        C[1, 1] = b
+        C[2, 2] = b
+
+        C[3, 3] = c
+        C[4, 4] = c
+        C[5, 5] = c
+
+        C *= a
+        return np.asmatrix(C)
+
+
+
+
 
     def SB(self, x, j, n_filters=16, n_blocks=1, upsample=True):
         output = x
@@ -145,7 +187,6 @@ class layers:
         flat_output = tf.reshape(x, shape=(tf.shape(x)[0], -1, tf.shape(x)[4]))
 
         prim_aligned_features = tf.gather(flat_output, flatten_prim_idx, axis=1)
-
         differentiate = tf.einsum('jqk, ijqt -> ijkt', inverse_jacobians, prim_aligned_features)
 
         primitive_features = tf.reshape(differentiate, shape=(-1, tf.shape(inverse_jacobians)[0], 4 * n_filters))
@@ -154,8 +195,35 @@ class layers:
         accumulate_features_on_points = tf.sparse_tensor_dense_matmul(self.multi_hot, b)
 
         out = tf.reshape(accumulate_features_on_points, shape=(-1, data_size, data_size, data_size, 4 * n_filters))
-        out = tf.concat((out, x), axis=4)
         return out
+
+    def full_fem_differentiate(self, x):
+        #data_size = x.get_shape().as_list()[1]
+        #flatten_prim_idx = tf.constant(self.grid_dict['prim_points'], dtype=tf.int64)
+        #n_filters = x.get_shape().as_list()[4]
+        #inverse_jacobians = tf.constant(np.reshape(self.grid_dict['inv_j'], newshape=(-1, 4, 4)), dtype=tf.float32)
+
+
+
+        #flat_output =  tf.reshape(x, shape=(tf.shape(x)[0], -1, tf.shape(x)[4]))
+        #mask = tf.tile(tf.eye(3), multiples=(4, 1))
+
+
+        #prim_aligned_features = tf.gather(flat_output, flatten_prim_idx, axis=1)
+        #flat_prim_aligned_features = tf.reshape(prim_aligned_features, shape=(-1, tf.shape(prim_aligned_features)[1], 12))
+        #flat_prim_aligned_features = tf.stack([flat_prim_aligned_features , flat_prim_aligned_features , flat_prim_aligned_features ], axis=3)
+        #flat_prim_aligned_features = tf.einsum('ij, ktij ->ktij', mask, flat_prim_aligned_features)
+        #flat_prim_aligned_features = tf.reduce_sum(flat_prim_aligned_features, axis=3)
+
+       # differentiate = tf.einsum('jqk, ijqt -> ijkt', inverse_jacobians, prim_aligned_features)
+
+       #primitive_features = tf.reshape(differentiate, shape=(-1, tf.shape(inverse_jacobians)[0], 4 * n_filters))
+       # b = tf.reshape(primitive_features, shape=(tf.shape(primitive_features)[1], -1))
+
+       # accumulate_features_on_points = tf.sparse_tensor_dense_matmul(self.multi_hot, b)
+
+       # out = tf.reshape(accumulate_features_on_points, shape=(-1, data_size, data_size, data_size, 4 * n_filters))
+        return self.B()
 
     def differentiate_features(self, x, n_filters = 128, name=''):
 
@@ -181,9 +249,7 @@ class layers:
                                 name='diff_convolution_out',
                                 activation = tf.nn.leaky_relu)
 
-            out = x_s + out
-            out = tf.nn.leaky_relu(out)
-
+            out = tf.concat((x_s, out), axis=4)
             return out
 
 class IntegratorNetwork:
@@ -301,6 +367,12 @@ class Convo_IntegratorNetwork:
 
 
 
+class TestNetWork(layers):
+    def __init__(self, voxel_side):
+        super(TestNetWork, self).__init__()
+        self.x = tf.placeholder(dtype=tf.float32, shape=(None,  voxel_side,  voxel_side,  voxel_side, 3), name='velocity')
+        self.out = self.full_fem_differentiate(self.x)
+
 
 class NetWork(layers):
 
@@ -376,13 +448,10 @@ class NetWork(layers):
                              name='output_convolution_sdf',
                                activation=tf.nn.relu)
 
+
         x = self.differentiate_features(x, n_filters=n_filters, name='1')
-
         x = tf.identity(tf.concat((x, sdf), axis=4), name='merge_sdf')
-
-
         x = self.differentiate_features(x, n_filters=n_filters, name='2')
-
         x = tf.layers.conv3d(x,   strides=(1, 1, 1),
                                   kernel_size=(3, 3, 3),
                                   filters=3, padding='SAME',
@@ -390,9 +459,6 @@ class NetWork(layers):
         return x
 
     def encoder_network(self, x, sb_blocks=1, n_filters=128):
-
-        x = self.differentiate_features(x, n_filters=n_filters, name='3')
-        x = self.differentiate_features(x, n_filters=n_filters, name='4')
 
         x = self.BB(x, int(self.q), FEM=config.use_fem, upsample=False, sb_blocks=sb_blocks, n_filters=n_filters)
 
@@ -422,6 +488,111 @@ class NetWork(layers):
                                  name='latent_convolution',
                                  activation=tf.nn.leaky_relu)
         return x
+
+
+
+
+
+class PINN:
+    def __init__(self, layers, neurons):
+
+        self.x = tf.placeholder(dtype=tf.float64, shape=(None, 1), name='x')
+        self.z = tf.placeholder(dtype=tf.float64, shape=(None, 1), name='z')
+        self.t = tf.placeholder(dtype=tf.float64, shape=(None, 1), name='time')
+
+        mask = tf.placeholder(dtype=tf.bool, shape=(None, 1), name='mask')
+        flag = tf.placeholder(dtype=tf.float64, shape=(None, 1), name='flag')
+        flag = tf.tile(flag, [1, 2])
+        inverted_scalar_mask = tf.math.logical_not(mask)
+        vector_mask = tf.reshape(tf.tile(mask, [1, 2]), (-1, 2))
+        mask = tf.reshape(tf.tile(mask, [1, 4]), (-1, 2, 2))
+
+        inverted_mask = tf.math.logical_not(mask)
+        inverted_vector_mask = tf.math.logical_not(vector_mask)
+
+        self.ice_pressure = tf.placeholder(dtype=tf.float64, shape=(None, 1), name='surface_pressure')
+        bulk_mod = tf.placeholder(dtype=tf.float64, shape=(None, 1), name='bulk_modulus')
+        shear_mod = tf.placeholder(dtype=tf.float64, shape=(None, 1), name='shear_modulus')
+
+        with tf.GradientTape(persistent=True) as t:
+            t.watch(self.x)
+            t.watch(self.z)
+
+            r = tf.sqrt(tf.square(self.x)  + tf.square(self.z))
+            inputs = tf.concat((r, self.x, self.z, self.t), axis=1)
+
+            activation = tf.nn.leaky_relu
+            activation2 = tf.nn.relu
+
+            P = tf.layers.dense(inputs, neurons, activation=tf.nn.tanh, name='PINN_Layer_1')
+            P = tf.layers.dense(P, neurons, activation=activation, name='PINN_Layer_2')
+            P = tf.layers.dense(P, neurons, activation=activation, name='PINN_Layer_3')
+
+            P = tf.layers.dense(P, neurons, activation=activation, name='PINN_Layer_4')
+            P = tf.layers.dense(P, neurons, activation=activation, name='PINN_Layer_5')
+            P = tf.layers.dense(P, neurons, activation=activation, name='PINN_Layer_6')
+
+            P = tf.layers.dense(P, neurons, activation=activation, name='PINN_Layer_7')
+            P = tf.layers.dense(P, neurons, activation=activation, name='PINN_Layer_8')
+
+            P = tf.layers.dense(P, neurons, activation=activation, name='PINN_Layer_9')
+            P = tf.layers.dense(P, neurons, activation=activation, name='PINN_Layer_10')
+
+            self.u = tf.layers.dense(P, 2, activation=None, name='output_layer')
+
+            self.u = (r-0.6) * self.u
+            ux = tf.gather(self.u, [-1, 0], axis=1)
+            uz = tf.gather(self.u, [-1, 1], axis=1)
+
+            ux_x = t.gradient(ux, self.x)
+            ux_z = t.gradient(ux, self.z)
+
+            self.grad_ux = tf.concat((ux_x, ux_z), axis=1)
+
+            uz_x = t.gradient(uz, self.x)
+            uz_z = t.gradient(uz, self.z)
+
+            self.grad_uz = tf.concat((uz_x, uz_z), axis=1)
+        del t
+
+        self.divergence_s = ux_x + uz_z
+        self.grad_s = tf.identity(tf.stack((self.grad_ux, self.grad_uz), axis=2), name='grad_s')
+        self.grad_st = tf.transpose(self.grad_s, name='grad_st', perm=[0, 2, 1])
+        self.strain = self.grad_s + self.grad_st
+
+        ident = tf.tile(tf.expand_dims(tf.eye(2, dtype=tf.float64), 0), multiples=(tf.shape(self.x)[0], 1, 1))
+        shear_matrix = tf.reshape(tf.tile(shear_mod, multiples=[1, 4]), shape=(-1, 2, 2))
+        self.stress = tf.tile(tf.expand_dims((bulk_mod + tf.cast(2.0 / 3.0, dtype=tf.float64) * shear_mod) * self.divergence_s, axis=2), multiples=[1, 2, 2])*ident + shear_matrix * self.strain
+
+
+
+        self.xo = tf.reshape(tf.boolean_mask(self.x, inverted_scalar_mask, axis=0), shape=(-1, 1))
+        self.zo = tf.reshape(tf.boolean_mask(self.z, inverted_scalar_mask, axis=0), shape=(-1, 1))
+        self.uo = tf.reshape(tf.boolean_mask(self.u, inverted_vector_mask, axis=0), shape=(-1, 2))
+
+        self.ice_pressure = tf.reshape(tf.boolean_mask(self.ice_pressure, inverted_scalar_mask, axis=0), shape=(-1, 1))
+        self.lower_bound_u = tf.multiply(flag, self.u)
+
+        self.stress_domain = tf.reshape(tf.boolean_mask(self.stress, mask, axis=0), (-1, 2, 2))
+        self.stress_boundary = tf.reshape(tf.boolean_mask(self.stress, inverted_mask, axis=0), (-1, 2, 2))
+
+        self.strain_domain = tf.reshape(tf.boolean_mask(self.strain, mask, axis=0), (-1, 2, 2))
+        self.strain_boundary = tf.reshape(tf.boolean_mask(self.strain, inverted_mask, axis=0), (-1, 2, 2))
+
+        self.n = tf.concat((self.x, self.z), axis=1) / tf.sqrt(
+            (tf.pow(self.x, 2) + tf.pow(self.z, 2)))
+
+        self.no = tf.concat((self.xo, self.zo), axis=1) / tf.sqrt(
+            (tf.pow(self.xo, 2) + tf.pow(self.zo, 2)))
+
+        self.energy = tf.einsum('kij,kij->k', self.stress, self.strain)
+
+        self.boundary_energy =  self.ice_pressure*self.no - tf.einsum('kij, kj->ki', self.stress_boundary, self.no)
+        self.pr_sample_boundary_energy = tf.reduce_sum(self.boundary_energy, axis=1)
+
+        self.loss = tf.reduce_mean(tf.square(self.energy)) + 1000*tf.reduce_mean(tf.square(self.boundary_energy))
+        self.train = tf.train.AdamOptimizer(tf.clip_by_value(self.loss/5000, 0.0, 0.0001)).minimize(self.loss)
+
 
 
 

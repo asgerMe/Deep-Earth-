@@ -40,15 +40,16 @@ def get_multihot():
     index = 0
     values = 0
     dense_shape = 0
-
+    config.grid_dir = 'D:\PhD\AI_FEM\grid'
     if True:
         files = os.listdir(config.grid_dir)
 
         print('Searching for grid in', config.grid_dir)
         for file in files:
             if file.endswith('.npz'):
-                print('Found grid:', file)
+
                 grid_dict = np.load(os.path.join(config.grid_dir, file))
+                print('Found grid:', file)
                 break
 
         if grid_dict == '':
@@ -327,12 +328,13 @@ def contour(field1, field2):
     X, Y = np.meshgrid(x, x)
 
     ax1 = plt.subplot(131)
-    plt.contourf(X, Y, slice1,levels=range(100), extend ='neither')
+    plt.contourf(X, Y, slice1, extend ='neither')
     ax2 = plt.subplot(132,  sharex=ax1)
-    plt.contourf(X, Y, slice2, levels=range(100), extend ='neither')
+    plt.contourf(X, Y, slice2 , extend ='neither')
     ax3 = plt.subplot(133, sharex=ax2)
-    plt.contourf(X, Y,  abs(slice1 - slice2), levels=range(100))
-
+    plt.contourf(X, Y,  abs(slice1 - slice2))
+    plt.colorbar()
+    print(np.amax(abs(slice1 - slice2)))
 
     plt.show()
 
